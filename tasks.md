@@ -10,5 +10,8 @@ To-Do:
 
 Doing
 [ ] Attach a non-transferable token with a buy fee.
+[ ] Add liquidity to uniswap v4
 
 Done
+
+- [x] Deploy the token when we launch the quarry.
