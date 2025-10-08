@@ -7,10 +7,11 @@ To-Do:
 [ ] Add a way for me to "close" the quarry as the owner.
 [ ] make the contract upgradeable
 [ ] add a forge where someone can burn 100 pieces and get a rock back.
-
-Doing
 [ ] Attach a non-transferable token with a buy fee.
 [ ] Add liquidity to uniswap v4
+
+Doing
+[ ] Add foundry test to check that the token was deployed correctly and we have the required supply in the quarry.
 
 Done
 
