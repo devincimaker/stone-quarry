@@ -2,18 +2,23 @@
 
 pragma solidity ^0.8.28;
 
-import { PoolKey } from "v4-core/types/PoolKey.sol";
-import { Currency} from "v4-core/types/Currency.sol";
-import { IPositionManager } from "v4-periphery/interfaces/IPositionManager.sol";
-import { IPoolManager } from "v4-core/interfaces/IPoolManager.sol";
+import { PoolKey } from "v4-core/src/types/PoolKey.sol";
+import { Currency} from "v4-core/src/types/Currency.sol";
+import { IPositionManager } from "v4-periphery/src/interfaces/IPositionManager.sol";
+import { IPoolManager } from "v4-core/src/interfaces/IPoolManager.sol";
 import { IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
+import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
+import { IPoolInitializer_v4 } from "v4-periphery/src/interfaces/IPoolInitializer_v4.sol";
+import { Actions } from "v4-periphery/src/libraries/Actions.sol";
+import { TickMath } from "v4-core/src/libraries/TickMath.sol";
+import { LiquidityAmounts } from "v4-core/test/utils/LiquidityAmounts.sol";
 
 import "./Pebble.sol";
 import "./QuarryHook.sol";
 
 contract Quarry {
     Pebble immutable public pebble;
-    QuarryHook public hook; 
+    address public hook; 
 
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                      CONSTANTS                      */
@@ -30,40 +35,86 @@ contract Quarry {
     /*                   STATE VARIABLES                   */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
 
-    uint public feeAddress;
+    address public feeAddress;
+    bool public loadingLiquidity;
 
-    constructor(address _posm, address _permit2, address _poolManager, address _feeAddress) {
+    constructor(address _posm, address _permit2, address _poolManager, address _feeAddress) payable {
         posm = IPositionManager(_posm);
         permit2 = IAllowanceTransfer(_permit2);
         poolManager = IPoolManager(_poolManager);
-
-        
+        feeAddress = _feeAddress;
+ 
         pebble = new Pebble();
-        hook = new QuarryHook();
+        // TODO: Implement proper hook with BaseHook and correct address flags
+        hook = address(0); // No hook for now
 
         _loadLiquidity();
     }
 
     function _loadLiquidity() internal {
+        loadingLiquidity = true;
+
         Currency currency0 = Currency.wrap(address(0));
         Currency currency1 = Currency.wrap(address(pebble));
 
-        uint lpFee = 0;
-        uint tickSpacing = 60;
+        uint24 lpFee = 0;
+        int24 tickSpacing = 60;
 
-        // PoolKey memory pool = PoolKey({
-        //     currency0: currency0,
-        //     currency1: currency1,
-        //     fee: lpFee,
-        //     tickSpacing: tickSpacing,
-        //     hooks: address(hook)
-        // });
+        uint256 token0Amount = 1; // 1 wei
+        uint256 token1Amount = 1_000_000_000 * 10 ** 18;
 
+        uint160 startingPrice = 501082896750095888663770159906816;
 
-        // Create a pool
+        int24 tickLower = TickMath.minUsableTick(tickSpacing);
+        int24 tickUpper = int24(175020);
 
-        // Add liquidity
+        PoolKey memory pool = PoolKey({
+            currency0: currency0,
+            currency1: currency1,
+            fee: lpFee,
+            tickSpacing: tickSpacing,
+            hooks: IHooks(hook)
+        });
+        bytes memory hookData = new bytes(0);
+
+        uint256 liquidity = LiquidityAmounts.getLiquidityForAmounts(
+            startingPrice,
+            TickMath.getSqrtPriceAtTick(tickLower),
+            TickMath.getSqrtPriceAtTick(tickUpper),
+            token0Amount,
+            token1Amount
+        );
+
+        uint256 amount0Max = token0Amount + 1 wei;
+        uint256 amount1Max = token1Amount + 1 wei;
+
+        bytes[] memory params = new bytes[](2);
+
+        bytes memory actions = abi.encodePacked(uint8(Actions.MINT_POSITION),uint8(Actions.SETTLE_PAIR));
+        bytes[] memory mintParams = new bytes[](2);
+        
+        mintParams[0] = abi.encode(pool, tickLower, tickUpper, liquidity, amount0Max, amount1Max, DEAD_ADDRESS, hookData);
+        mintParams[1] = abi.encode(pool.currency0, pool.currency1);
+        
+        params[0] = abi.encodeWithSelector(
+            IPoolInitializer_v4.initializePool.selector,
+            pool,
+            startingPrice,
+            hookData
+        );
+        params[1] = abi.encodeWithSelector(
+            posm.modifyLiquidities.selector, 
+            abi.encode(actions, mintParams), 
+            block.timestamp + 3600
+        );
+
+        uint256 valueToPass = amount0Max;
+        pebble.approve(address(permit2), type(uint256).max);
+        permit2.approve(address(pebble), address(posm), type(uint160).max, type(uint48).max);
+    
+        posm.multicall{ value: valueToPass }(params);
+
+        loadingLiquidity = false;
     }
 }
-
 

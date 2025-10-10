@@ -4,8 +4,10 @@ out = "out"
 libs = ["lib"]
 
 remappings = [
-    "v4-periphery/=lib/v4-periphery/src/",
+    "v4-core/=lib/v4-core/",
+    "v4-periphery/=lib/v4-periphery/",
     "permit2/=lib/v4-periphery/lib/permit2/",
+    "solady/=lib/solady/src/",
 ]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
