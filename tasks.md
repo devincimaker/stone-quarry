@@ -9,6 +9,7 @@ To-Do:
 [ ] add a forge where someone can burn 100 pieces and get a rock back.
 
 Doing
+[ ] Remove hook from the quarry constructor.
 [ ] Make the token non-transferable
 [ ] Add a transfer fee to the token (of 1)
 

@@ -12,22 +12,27 @@ import { IPoolInitializer_v4 } from "v4-periphery/src/interfaces/IPoolInitialize
 import { Actions } from "v4-periphery/src/libraries/Actions.sol";
 import { TickMath } from "v4-core/src/libraries/TickMath.sol";
 import { LiquidityAmounts } from "v4-core/test/utils/LiquidityAmounts.sol";
+import {Ownable} from "solady/auth/Ownable.sol";
 
 import "./Pebble.sol";
-import "./QuarryHook.sol";
+import "./StoneQuarryHook.sol";
 
-contract Quarry {
-    Pebble immutable public pebble;
-    QuarryHook immutable public hook; 
-
+contract StoneQuarry is Ownable {
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                      CONSTANTS                      */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    /// @notice The strategy token contract
+    Pebble immutable public pebble;
+    /// @notice How much eth to send when deploying the pool
     uint256 private constant ethToPair = 2 wei;
+    /// @notice The Uniswap position manager
     IPositionManager private immutable posm;
+    /// @notice The Uniswap permit2 contract
     IAllowanceTransfer private immutable permit2;
+    /// @notice The Uniswap pool manager
     IPoolManager private immutable poolManager;
 
+    /// @notice The address to burn tokens
     address public constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
 
 
@@ -35,23 +40,44 @@ contract Quarry {
     /*                   STATE VARIABLES                   */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
 
+    /// @notice The address for the Uniswap hook
+    address public hookAddress; 
+    /// @notice The address that receives the fees
     address public feeAddress;
+    /// @notice Gates the hook to only when we're loading a new token
+    bool public loadingLiquidity;
 
-    constructor(address _posm, address _permit2, address _poolManager, address _feeAddress) payable {
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    /*                    CUSTOM ERRORS                    */
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+
+    /// @notice Hook address has not been set
+    error HookNotSet();
+    /// @notice Incorrect ETH amount sent with launch transaction
+    error WrongEthAmount();
+
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    /*                    CUSTOM EVENTS                    */
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    event QuarryOpen();
+
+    /// @notice Constructor initializes the quarry with required dependencies
+    /// @param _posm Uniswap V4 Position Manager address
+    /// @param _permit2 Permit2 contract address
+    /// @param _poolManager Uniswap V4 Pool Manager address
+    /// @param _feeAddress Address to receive deployment fees
+    constructor(address _posm, address _permit2, address _poolManager, address _feeAddress) {
         posm = IPositionManager(_posm);
         permit2 = IAllowanceTransfer(_permit2);
         poolManager = IPoolManager(_poolManager);
-        feeAddress = _feeAddress;
- 
-        pebble = new Pebble(_poolManager);
-        hook = new QuarryHook(_poolManager, address(this), address(pebble));
-        
-        pebble.setHookAddress(address(hook));
-        hook.setLoadingLiquidity(true);
+        feeAddress = _feeAddress; 
+    }
 
-        _loadLiquidity();
-        
-        hook.setLoadingLiquidity(false);
+    /// @notice Updates the hook attached to new NFTStrategy pools
+    /// @param _hookAddress New Uniswap v4 hook address
+    /// @dev Only callable by owner
+    function updateHookAddress(address _hookAddress) external onlyOwner {
+        hookAddress = _hookAddress;
     }
 
     function _loadLiquidity() internal {
