@@ -18,7 +18,7 @@ import "./QuarryHook.sol";
 
 contract Quarry {
     Pebble immutable public pebble;
-    address public hook; 
+    QuarryHook immutable public hook; 
 
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                      CONSTANTS                      */
@@ -36,7 +36,6 @@ contract Quarry {
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
 
     address public feeAddress;
-    bool public loadingLiquidity;
 
     constructor(address _posm, address _permit2, address _poolManager, address _feeAddress) payable {
         posm = IPositionManager(_posm);
@@ -44,16 +43,18 @@ contract Quarry {
         poolManager = IPoolManager(_poolManager);
         feeAddress = _feeAddress;
  
-        pebble = new Pebble();
-        // TODO: Implement proper hook with BaseHook and correct address flags
-        hook = address(0); // No hook for now
+        pebble = new Pebble(_poolManager);
+        hook = new QuarryHook(_poolManager, address(this), address(pebble));
+        
+        pebble.setHookAddress(address(hook));
+        hook.setLoadingLiquidity(true);
 
         _loadLiquidity();
+        
+        hook.setLoadingLiquidity(false);
     }
 
     function _loadLiquidity() internal {
-        loadingLiquidity = true;
-
         Currency currency0 = Currency.wrap(address(0));
         Currency currency1 = Currency.wrap(address(pebble));
 
@@ -73,7 +74,7 @@ contract Quarry {
             currency1: currency1,
             fee: lpFee,
             tickSpacing: tickSpacing,
-            hooks: IHooks(hook)
+            hooks: IHooks(address(hook))
         });
         bytes memory hookData = new bytes(0);
 
@@ -113,8 +114,6 @@ contract Quarry {
         permit2.approve(address(pebble), address(posm), type(uint160).max, type(uint48).max);
     
         posm.multicall{ value: valueToPass }(params);
-
-        loadingLiquidity = false;
     }
 }
 

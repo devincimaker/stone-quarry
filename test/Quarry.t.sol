@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.28;
 
 import { Test } from "forge-std/Test.sol";
 import { StateLibrary } from "v4-core/src/libraries/StateLibrary.sol";
@@ -8,6 +8,7 @@ import { PoolKey } from "v4-core/src/types/PoolKey.sol";
 import { Currency } from "v4-core/src/types/Currency.sol";
 import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
 import { IPoolManager } from "v4-core/src/interfaces/IPoolManager.sol";
+import { ModifyLiquidityParams, SwapParams } from "v4-core/src/types/PoolOperation.sol";
 import { PoolSwapTest } from "v4-core/src/test/PoolSwapTest.sol";
 import { BalanceDelta } from "v4-core/src/types/BalanceDelta.sol";
 import { TickMath } from "v4-core/src/libraries/TickMath.sol";
@@ -101,7 +102,7 @@ contract QuarryTest is Test {
         // zeroForOne = true (ETH -> Pebble)
         // amountSpecified negative = exact input
         uint256 ethToSwap = 0.01 ether;
-        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
+        SwapParams memory params = SwapParams({
             zeroForOne: true,
             amountSpecified: -int256(ethToSwap), // negative means exact input
             sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1 // no price limit
@@ -149,6 +150,259 @@ contract QuarryTest is Test {
         // Verify the delta matches what we received
         assertEq(-delta.amount0(), int256(ethToSwap), "Delta amount0 should match ETH spent");
         assertEq(delta.amount1(), int256(pebbleReceived), "Delta amount1 should match Pebble received");
+    }
+
+    function test_SwapPebbleForETH() public {
+        // First swap ETH for Pebble to get some Pebble tokens
+        PoolSwapTest swapRouter = new PoolSwapTest(IPoolManager(poolManager));
+        Pebble pebble = quarry.pebble();
+        
+        PoolKey memory pool = PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(address(pebble)),
+            fee: 0,
+            tickSpacing: 60,
+            hooks: IHooks(quarry.hook())
+        });
+        
+        // Buy Pebble first
+        uint256 ethToSwap = 0.01 ether;
+        SwapParams memory buyParams = SwapParams({
+            zeroForOne: true,
+            amountSpecified: -int256(ethToSwap),
+            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+        });
+        
+        PoolSwapTest.TestSettings memory testSettings = PoolSwapTest.TestSettings({
+            takeClaims: false,
+            settleUsingBurn: false
+        });
+        
+        swapRouter.swap{value: ethToSwap}(pool, buyParams, testSettings, "");
+        
+        // Now swap Pebble back to ETH
+        uint256 pebbleBalance = pebble.balanceOf(address(this));
+        uint256 pebbleToSwap = pebbleBalance / 2; // Swap half back
+        
+        uint256 ethBalanceBefore = address(this).balance;
+        
+        SwapParams memory sellParams = SwapParams({
+            zeroForOne: false, // Pebble -> ETH
+            amountSpecified: -int256(pebbleToSwap),
+            sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
+        });
+        
+        BalanceDelta delta = swapRouter.swap(pool, sellParams, testSettings, "");
+        
+        uint256 ethBalanceAfter = address(this).balance;
+        uint256 ethReceived = ethBalanceAfter - ethBalanceBefore;
+        
+        assertTrue(ethReceived > 0, "Should have received ETH");
+        assertTrue(delta.amount0() > 0, "Delta should show ETH received");
+        assertTrue(delta.amount1() < 0, "Delta should show Pebble sent");
+        
+        emit log_named_uint("Pebble swapped", pebbleToSwap);
+        emit log_named_uint("ETH received", ethReceived);
+    }
+
+    function test_FeeCollection() public {
+        PoolSwapTest swapRouter = new PoolSwapTest(IPoolManager(poolManager));
+        Pebble pebble = quarry.pebble();
+        
+        PoolKey memory pool = PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(address(pebble)),
+            fee: 0,
+            tickSpacing: 60,
+            hooks: IHooks(quarry.hook())
+        });
+        
+        // Record Quarry's balance before swap
+        IPoolManager manager = IPoolManager(poolManager);
+        uint256 quarryEthBalanceBefore = manager.balanceOf(address(quarry), uint256(uint160(Currency.unwrap(Currency.wrap(address(0))))));
+        uint256 quarryPebbleBalanceBefore = manager.balanceOf(address(quarry), uint256(uint160(Currency.unwrap(Currency.wrap(address(pebble))))));
+        
+        // Perform a swap
+        uint256 ethToSwap = 0.1 ether;
+        SwapParams memory params = SwapParams({
+            zeroForOne: true,
+            amountSpecified: -int256(ethToSwap),
+            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+        });
+        
+        PoolSwapTest.TestSettings memory testSettings = PoolSwapTest.TestSettings({
+            takeClaims: false,
+            settleUsingBurn: false
+        });
+        
+        BalanceDelta delta = swapRouter.swap{value: ethToSwap}(pool, params, testSettings, "");
+        
+        // Record Quarry's balance after swap
+        uint256 quarryEthBalanceAfter = manager.balanceOf(address(quarry), uint256(uint160(Currency.unwrap(Currency.wrap(address(0))))));
+        uint256 quarryPebbleBalanceAfter = manager.balanceOf(address(quarry), uint256(uint160(Currency.unwrap(Currency.wrap(address(pebble))))));
+        
+        // Calculate fees collected (10% of output)
+        uint256 pebbleReceived = uint256(int256(delta.amount1()));
+        uint256 expectedFee = pebbleReceived / 10; // 10% fee
+        
+        // Quarry should have received fees in Pebble
+        uint256 feeCollected = quarryPebbleBalanceAfter - quarryPebbleBalanceBefore;
+        
+        // Allow for small rounding differences
+        assertApproxEqAbs(
+            feeCollected,
+            expectedFee,
+            expectedFee / 100, // 1% tolerance
+            "Quarry should have collected ~10% fee in Pebble"
+        );
+        
+        assertTrue(feeCollected > 0, "Fee should have been collected");
+        
+        emit log_named_uint("Pebble received by swapper", pebbleReceived);
+        emit log_named_uint("Fee collected by Quarry", feeCollected);
+        emit log_named_uint("Expected fee (10%)", expectedFee);
+    }
+
+    function test_DirectTransferBlocked() public {
+        // First get some Pebble tokens via swap
+        PoolSwapTest swapRouter = new PoolSwapTest(IPoolManager(poolManager));
+        Pebble pebble = quarry.pebble();
+        
+        PoolKey memory pool = PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(address(pebble)),
+            fee: 0,
+            tickSpacing: 60,
+            hooks: IHooks(quarry.hook())
+        });
+        
+        uint256 ethToSwap = 0.01 ether;
+        SwapParams memory params = SwapParams({
+            zeroForOne: true,
+            amountSpecified: -int256(ethToSwap),
+            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+        });
+        
+        PoolSwapTest.TestSettings memory testSettings = PoolSwapTest.TestSettings({
+            takeClaims: false,
+            settleUsingBurn: false
+        });
+        
+        swapRouter.swap{value: ethToSwap}(pool, params, testSettings, "");
+        
+        // Now try to transfer Pebble directly to another address
+        address recipient = address(0x1234);
+        uint256 transferAmount = 1000 * 10 ** 18;
+        
+        // This should revert with InvalidTransfer
+        vm.expectRevert(Pebble.InvalidTransfer.selector);
+        pebble.transfer(recipient, transferAmount);
+    }
+
+    function test_DirectTransferFromBlocked() public {
+        // First get some Pebble tokens
+        PoolSwapTest swapRouter = new PoolSwapTest(IPoolManager(poolManager));
+        Pebble pebble = quarry.pebble();
+        
+        PoolKey memory pool = PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(address(pebble)),
+            fee: 0,
+            tickSpacing: 60,
+            hooks: IHooks(quarry.hook())
+        });
+        
+        uint256 ethToSwap = 0.01 ether;
+        SwapParams memory params = SwapParams({
+            zeroForOne: true,
+            amountSpecified: -int256(ethToSwap),
+            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+        });
+        
+        PoolSwapTest.TestSettings memory testSettings = PoolSwapTest.TestSettings({
+            takeClaims: false,
+            settleUsingBurn: false
+        });
+        
+        swapRouter.swap{value: ethToSwap}(pool, params, testSettings, "");
+        
+        // Approve another address
+        address spender = address(0x5678);
+        uint256 approveAmount = 1000 * 10 ** 18;
+        pebble.approve(spender, approveAmount);
+        
+        // Try to transferFrom (should also be blocked)
+        address recipient = address(0x9ABC);
+        
+        vm.prank(spender);
+        vm.expectRevert(Pebble.InvalidTransfer.selector);
+        pebble.transferFrom(address(this), recipient, approveAmount);
+    }
+
+    function test_OnlyPoolManagerCanTransfer() public {
+        // Get some Pebble tokens
+        PoolSwapTest swapRouter = new PoolSwapTest(IPoolManager(poolManager));
+        Pebble pebble = quarry.pebble();
+        
+        PoolKey memory pool = PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(address(pebble)),
+            fee: 0,
+            tickSpacing: 60,
+            hooks: IHooks(quarry.hook())
+        });
+        
+        // Do a successful swap to verify poolManager CAN transfer
+        uint256 ethToSwap = 0.01 ether;
+        SwapParams memory params = SwapParams({
+            zeroForOne: true,
+            amountSpecified: -int256(ethToSwap),
+            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+        });
+        
+        PoolSwapTest.TestSettings memory testSettings = PoolSwapTest.TestSettings({
+            takeClaims: false,
+            settleUsingBurn: false
+        });
+        
+        // This should succeed because it goes through the pool manager
+        BalanceDelta delta = swapRouter.swap{value: ethToSwap}(pool, params, testSettings, "");
+        
+        assertTrue(delta.amount1() > 0, "Should have received Pebble tokens through pool");
+        
+        // But direct transfers should still fail
+        vm.expectRevert(Pebble.InvalidTransfer.selector);
+        pebble.transfer(address(0x1234), 100);
+    }
+
+    function test_ExactOutputReverts() public {
+        PoolSwapTest swapRouter = new PoolSwapTest(IPoolManager(poolManager));
+        Pebble pebble = quarry.pebble();
+        
+        PoolKey memory pool = PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(address(pebble)),
+            fee: 0,
+            tickSpacing: 60,
+            hooks: IHooks(quarry.hook())
+        });
+        
+        // Try exact output swap (positive amountSpecified)
+        uint256 pebbleDesired = 1000 * 10 ** 18;
+        SwapParams memory params = SwapParams({
+            zeroForOne: true,
+            amountSpecified: int256(pebbleDesired), // POSITIVE = exact output
+            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+        });
+        
+        PoolSwapTest.TestSettings memory testSettings = PoolSwapTest.TestSettings({
+            takeClaims: false,
+            settleUsingBurn: false
+        });
+        
+        // Should revert with ExactOutputNotAllowed
+        vm.expectRevert(); // The custom error will be encoded in the revert
+        swapRouter.swap{value: 1 ether}(pool, params, testSettings, "");
     }
 
     // Add this helper function to receive ETH refunds from the swap router
