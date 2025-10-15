@@ -22,7 +22,7 @@ contract StoneQuarry is Ownable {
     /*                      CONSTANTS                      */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /// @notice The strategy token contract
-    Pebble immutable public pebble;
+    Pebble public pebble;
     /// @notice How much eth to send when deploying the pool
     uint256 private constant ethToPair = 2 wei;
     /// @notice The Uniswap position manager
@@ -46,6 +46,8 @@ contract StoneQuarry is Ownable {
     address public feeAddress;
     /// @notice Gates the hook to only when we're loading a new token
     bool public loadingLiquidity;
+    ///@notice Tracks if the stone quarry started working 
+    bool public quarryStarted;
 
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                    CUSTOM ERRORS                    */
@@ -55,11 +57,16 @@ contract StoneQuarry is Ownable {
     error HookNotSet();
     /// @notice Incorrect ETH amount sent with launch transaction
     error WrongEthAmount();
-
+    /// @notice Quarry already started working
+    error AlreadyStarted();
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                    CUSTOM EVENTS                    */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     event QuarryOpen();
+
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    /*                     CONSTRUCTOR                     */
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
 
     /// @notice Constructor initializes the quarry with required dependencies
     /// @param _posm Uniswap V4 Position Manager address
@@ -71,7 +78,13 @@ contract StoneQuarry is Ownable {
         permit2 = IAllowanceTransfer(_permit2);
         poolManager = IPoolManager(_poolManager);
         feeAddress = _feeAddress; 
+        
+         _initializeOwner(msg.sender);
     }
+
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    /*                    ADMIN FUNCTIONS                  */
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
 
     /// @notice Updates the hook attached to new NFTStrategy pools
     /// @param _hookAddress New Uniswap v4 hook address
@@ -80,7 +93,19 @@ contract StoneQuarry is Ownable {
         hookAddress = _hookAddress;
     }
 
+    function startQuarry() external onlyOwner {
+        if (hookAddress == address(0)) revert HookNotSet();
+        if (quarryStarted) revert AlreadyStarted();
+
+        // lanzar pebble
+        pebble = new Pebble(address(poolManager), hookAddress, msg.sender);
+
+        _loadLiquidity();
+    }
+
     function _loadLiquidity() internal {
+        loadingLiquidity = true;
+        
         Currency currency0 = Currency.wrap(address(0));
         Currency currency1 = Currency.wrap(address(pebble));
 
@@ -100,7 +125,7 @@ contract StoneQuarry is Ownable {
             currency1: currency1,
             fee: lpFee,
             tickSpacing: tickSpacing,
-            hooks: IHooks(address(hook))
+            hooks: IHooks(hookAddress)
         });
         bytes memory hookData = new bytes(0);
 
@@ -140,6 +165,8 @@ contract StoneQuarry is Ownable {
         permit2.approve(address(pebble), address(posm), type(uint160).max, type(uint48).max);
     
         posm.multicall{ value: valueToPass }(params);
+
+        loadingLiquidity = false;
     }
 }
 

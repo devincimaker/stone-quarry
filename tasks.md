@@ -7,6 +7,7 @@ To-Do:
 [ ] Add a way for me to "close" the quarry as the owner.
 [ ] make the contract upgradeable
 [ ] add a forge where someone can burn 100 pieces and get a rock back.
+[ ] Implementar un TWAP para el vender las rocas.
 
 Doing
 [ ] Remove hook from the quarry constructor.
