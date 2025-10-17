@@ -65,6 +65,10 @@ contract StoneQuarry is Ownable {
     error RockNotForSale();
     /// @notice Insufficient ETH sent
     error InsufficientEthForRockBuy();
+    /// @notice Not the owner of the rock
+    error NotOwnerOfRock();
+    /// @notice Already the owner of the rock
+    error AlreadyOwnerOfRock(); 
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                    CUSTOM EVENTS                    */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
@@ -90,12 +94,18 @@ contract StoneQuarry is Ownable {
 
     // Add function to acquire a rock if the contract has the money
     function acquireRock(uint256 rockNumber) external payable {
-        (, bool currentlyForSale, uint256 price,) = etherRockOG.rocks(rockNumber);
+        (address owner, bool currentlyForSale, uint256 price,) = etherRockOG.rocks(rockNumber);
 
+        if (owner == address(this)) revert AlreadyOwnerOfRock();
         if (!currentlyForSale) revert RockNotForSale();
-        if (price < msg.value) revert InsufficientEthForRockBuy();
+        if (price > address(this).balance) revert InsufficientEthForRockBuy();
 
-        
+        etherRockOG.buyRock{ value: price }(rockNumber);
+        etherRockOG.setRockForSale(rockNumber, false);
+
+        // require that we are the owner of the rock
+        (address newOwner, , , ) = etherRockOG.rocks(rockNumber);
+        if (newOwner != address(this)) revert NotOwnerOfRock();
     }
 
     // Add a function to buy a new mini rock if it is available.

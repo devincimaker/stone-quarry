@@ -310,6 +310,147 @@ contract QuarryTest is Test {
         swapRouter.swap{value: 1 ether}(pool, params, testSettings, "");
     }
 
+    function test_AcquireRock() public {
+        // Give the quarry 1000 ETH to buy a rock
+        vm.deal(address(quarry), 1000 ether);
+        
+        // Record balance before purchase
+        uint256 balanceBefore = address(quarry).balance;
+        
+        // Get rock info before purchase
+        (address ownerBefore, bool forSaleBefore, uint256 price, uint256 timesSoldBefore) = 
+            quarry.etherRockOG().rocks(20);
+        
+        emit log_named_address("Rock owner before", ownerBefore);
+        emit log_named_uint("Rock price", price);
+        emit log_named_string("For sale before", forSaleBefore ? "Yes" : "No");
+        
+        // Purchase rock #20 (for sale at 124 ETH)
+        quarry.acquireRock(20);
+        
+        // Verify the contract now owns the rock
+        (address ownerAfter, bool forSaleAfter,, uint256 timesSoldAfter) = 
+            quarry.etherRockOG().rocks(20);
+        
+        assertEq(ownerAfter, address(quarry), "Quarry should own the rock");
+        assertFalse(forSaleAfter, "Rock should no longer be for sale");
+        assertEq(timesSoldAfter, timesSoldBefore + 1, "Times sold should increment");
+        
+        // Verify ETH was spent
+        uint256 balanceAfter = address(quarry).balance;
+        uint256 ethSpent = balanceBefore - balanceAfter;
+        assertEq(ethSpent, price, "Should have spent the rock price");
+        
+        emit log_named_address("Rock owner after", ownerAfter);
+        emit log_named_string("For sale after", forSaleAfter ? "Yes" : "No");
+        emit log_named_uint("ETH spent", ethSpent);
+        emit log_named_uint("Times sold", timesSoldAfter);
+    }
+
+    function test_AcquireRockThroughFees() public {
+        // Get rock info - we need 124 ETH to buy rock #20
+        (,, uint256 rockPrice,) = quarry.etherRockOG().rocks(20);
+        
+        emit log_string("=== Starting Fee Accumulation Test ===");
+        emit log_named_uint("Target rock price", rockPrice);
+        emit log_named_uint("Starting quarry balance", address(quarry).balance);
+        
+        // Give the test account 2000 ETH to trade with
+        vm.deal(address(this), 2000 ether);
+        
+        // Track swap sizes - varying amounts
+        uint256[10] memory swapSizes = [
+            uint256(100 ether),
+            150 ether,
+            200 ether,
+            75 ether,
+            125 ether,
+            180 ether,
+            90 ether,
+            160 ether,
+            110 ether,
+            140 ether
+        ];
+        
+        uint256 swapCount = 0;
+        uint256 previousBalance = address(quarry).balance;
+        
+        // Perform multiple swaps until we have enough to buy the rock
+        for (uint256 i = 0; i < swapSizes.length; i++) {
+            uint256 ethToSwap = swapSizes[i];
+            
+            // Record balance before swap
+            uint256 quarryBalanceBefore = address(quarry).balance;
+            
+            // Perform swap (ETH -> Pebble, which generates fee in ETH)
+            _swapETHForPebble(ethToSwap);
+            
+            // Record balance after swap
+            uint256 balanceAfterSwap = address(quarry).balance;
+            uint256 feeCollected = balanceAfterSwap - quarryBalanceBefore;
+            
+            swapCount++;
+            
+            // Assert that fees were collected
+            assertTrue(feeCollected > 0, "Fee should have been collected");
+            assertTrue(balanceAfterSwap > quarryBalanceBefore, "Quarry balance should increase");
+            
+            // Log swap details
+            emit log_string("--- Swap Details ---");
+            emit log_named_uint("Swap #", swapCount);
+            emit log_named_uint("ETH swapped", ethToSwap);
+            emit log_named_uint("Fee collected this swap", feeCollected);
+            emit log_named_uint("Cumulative quarry balance", balanceAfterSwap);
+            emit log_named_uint("Still needed", balanceAfterSwap >= rockPrice ? 0 : rockPrice - balanceAfterSwap);
+            
+            previousBalance = balanceAfterSwap;
+            
+            // Check if we have enough to buy the rock
+            if (balanceAfterSwap >= rockPrice) {
+                emit log_string("=== Sufficient fees collected! ===");
+                emit log_named_uint("Total swaps performed", swapCount);
+                emit log_named_uint("Final quarry balance", balanceAfterSwap);
+                break;
+            }
+        }
+        
+        // Verify we accumulated enough fees
+        uint256 finalQuarryBalance = address(quarry).balance;
+        assertGe(finalQuarryBalance, rockPrice, "Should have accumulated enough fees to buy rock");
+        
+        emit log_string("=== Attempting Rock Purchase ===");
+        
+        // Get rock info before purchase
+        (address ownerBefore, bool forSaleBefore,, uint256 timesSoldBefore) = 
+            quarry.etherRockOG().rocks(20);
+        
+        emit log_named_address("Rock owner before", ownerBefore);
+        emit log_named_string("For sale before", forSaleBefore ? "Yes" : "No");
+        
+        // Purchase rock #20 using accumulated fees
+        quarry.acquireRock(20);
+        
+        // Verify the contract now owns the rock
+        (address ownerAfter, bool forSaleAfter,, uint256 timesSoldAfter) = 
+            quarry.etherRockOG().rocks(20);
+        
+        assertEq(ownerAfter, address(quarry), "Quarry should own the rock");
+        assertFalse(forSaleAfter, "Rock should no longer be for sale");
+        assertEq(timesSoldAfter, timesSoldBefore + 1, "Times sold should increment");
+        
+        // Verify ETH was spent
+        uint256 quarryBalanceAfter = address(quarry).balance;
+        uint256 ethSpent = finalQuarryBalance - quarryBalanceAfter;
+        assertEq(ethSpent, rockPrice, "Should have spent the rock price");
+        
+        emit log_string("=== Rock Purchase Complete ===");
+        emit log_named_address("Rock owner after", ownerAfter);
+        emit log_named_string("For sale after", forSaleAfter ? "Yes" : "No");
+        emit log_named_uint("ETH spent on rock", ethSpent);
+        emit log_named_uint("Remaining quarry balance", quarryBalanceAfter);
+        emit log_named_uint("Total swaps to accumulate fees", swapCount);
+    }
+
     // Add this helper function to receive ETH refunds from the swap router
     receive() external payable {}
 
