@@ -16,6 +16,7 @@ import { Ownable } from "solady/auth/Ownable.sol";
 
 import "./Pebble.sol";
 import "./StoneQuarryHook.sol";
+import "./IEtherRockOG.sol";
 
 contract StoneQuarry is Ownable {
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
@@ -31,7 +32,8 @@ contract StoneQuarry is Ownable {
     IAllowanceTransfer private immutable permit2;
     /// @notice The Uniswap pool manager
     IPoolManager private immutable poolManager;
-
+    /// @notice The EtherRockOG contract
+    IEtherRockOG public constant etherRockOG = IEtherRockOG(0x41f28833Be34e6EDe3c58D1f597bef429861c4E2);
     /// @notice The address to burn tokens
     address public constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
 
@@ -59,6 +61,10 @@ contract StoneQuarry is Ownable {
     error WrongEthAmount();
     /// @notice Quarry already started working
     error AlreadyStarted();
+    /// @notice Rock is not for sale
+    error RockNotForSale();
+    /// @notice Insufficient ETH sent
+    error InsufficientEthForRockBuy();
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                    CUSTOM EVENTS                    */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
@@ -81,6 +87,18 @@ contract StoneQuarry is Ownable {
         
          _initializeOwner(msg.sender);
     }
+
+    // Add function to acquire a rock if the contract has the money
+    function acquireRock(uint256 rockNumber) external payable {
+        (, bool currentlyForSale, uint256 price,) = etherRockOG.rocks(rockNumber);
+
+        if (!currentlyForSale) revert RockNotForSale();
+        if (price < msg.value) revert InsufficientEthForRockBuy();
+
+        
+    }
+
+    // Add a function to buy a new mini rock if it is available.
 
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                    ADMIN FUNCTIONS                  */
@@ -169,5 +187,8 @@ contract StoneQuarry is Ownable {
 
         loadingLiquidity = false;
     }
+
+    /// @notice Allows the contract to receive ETH fees from the hook
+    receive() external payable {}
 }
 

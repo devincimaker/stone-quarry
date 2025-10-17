@@ -242,41 +242,30 @@ contract QuarryTest is Test {
 
 
     function test_FeeCollection() public {
-        // Record Quarry's balance before swap
-        IPoolManager manager = IPoolManager(poolManager);
-        uint256 quarryEthBalanceBefore = manager.balanceOf(address(quarry), uint256(uint160(address(0))));
-        uint256 quarryPebbleBalanceBefore = manager.balanceOf(address(quarry), uint256(uint160(address(pebble))));
+        // Record Quarry's ETH balance before swap (fees are now collected in ETH)
+        uint256 quarryETHBalanceBefore = address(quarry).balance;
         
-        // Perform a swap
+        // Perform a swap (ETH -> Pebble, fee taken in Pebble then converted to ETH)
         uint256 ethToSwap = 0.1 ether;
         (, BalanceDelta delta) = _swapETHForPebble(ethToSwap);
         
-        // Record Quarry's balance after swap
-        uint256 quarryEthBalanceAfter = manager.balanceOf(address(quarry), uint256(uint160(address(0))));
-        uint256 quarryPebbleBalanceAfter = manager.balanceOf(address(quarry), uint256(uint160(address(pebble))));
+        // Record Quarry's ETH balance after swap
+        uint256 quarryETHBalanceAfter = address(quarry).balance;
         
-        // Calculate fees collected (10% of output)
+        // Calculate fees collected
+        // The fee is 10% of the Pebble output, but it gets swapped to ETH
         uint256 pebbleReceived = uint256(int256(delta.amount1()));
-        uint256 expectedFee = pebbleReceived / 10; // 10% fee
         
-        // Quarry should have received fees in Pebble
-        uint256 feeCollected = quarryPebbleBalanceAfter - quarryPebbleBalanceBefore;
-
-        // Allow for small rounding differences
-        assertApproxEqAbs(
-            feeCollected,
-            expectedFee,
-            expectedFee / 2, // 2% tolerance
-            "Quarry should have collected ~10% fee in Pebble"
-        );
+        // Quarry should have received fees in ETH (converted from Pebble)
+        uint256 feeCollected = quarryETHBalanceAfter - quarryETHBalanceBefore;
         
-        assertTrue(feeCollected > 0, "Fee should have been collected");
+        // The fee should be > 0 since we took 10% of Pebble and swapped it to ETH
+        assertTrue(feeCollected > 0, "Fee should have been collected in ETH");
 
         emit log_named_uint("Pebble received by swapper", pebbleReceived);
-        emit log_named_uint("Fee collected by Quarry", feeCollected);
-        emit log_named_uint("Expected fee (10%)", expectedFee);
-        emit log_named_uint("Quarry Pebble balance before", quarryPebbleBalanceBefore);
-        emit log_named_uint("Quarry Pebble balance after", quarryPebbleBalanceAfter);
+        emit log_named_uint("Fee collected by Quarry (in ETH)", feeCollected);
+        emit log_named_uint("Quarry ETH balance before", quarryETHBalanceBefore);
+        emit log_named_uint("Quarry ETH balance after", quarryETHBalanceAfter);
     }
 
     function test_DirectTransferBlocked() public {
@@ -292,35 +281,34 @@ contract QuarryTest is Test {
         pebble.transfer(recipient, transferAmount);
     }
 
-    // function test_ExactOutputReverts() public {
-    //     PoolSwapTest swapRouter = new PoolSwapTest(IPoolManager(poolManager));
-    //     Pebble pebble = quarry.pebble();
+    function test_ExactOutputReverts() public {
+        PoolSwapTest swapRouter = new PoolSwapTest(IPoolManager(poolManager));
         
-    //     PoolKey memory pool = PoolKey({
-    //         currency0: Currency.wrap(address(0)),
-    //         currency1: Currency.wrap(address(pebble)),
-    //         fee: 0,
-    //         tickSpacing: 60,
-    //         hooks: IHooks(quarry.hook())
-    //     });
+        PoolKey memory pool = PoolKey({
+            currency0: Currency.wrap(address(0)),
+            currency1: Currency.wrap(address(pebble)),
+            fee: 0,
+            tickSpacing: 60,
+            hooks: IHooks(quarry.hookAddress())
+        });
         
-    //     // Try exact output swap (positive amountSpecified)
-    //     uint256 pebbleDesired = 1000 * 10 ** 18;
-    //     SwapParams memory params = SwapParams({
-    //         zeroForOne: true,
-    //         amountSpecified: int256(pebbleDesired), // POSITIVE = exact output
-    //         sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
-    //     });
+        // Try exact output swap (positive amountSpecified)
+        uint256 pebbleDesired = 1000 * 10 ** 18;
+        SwapParams memory params = SwapParams({
+            zeroForOne: true,
+            amountSpecified: int256(pebbleDesired), // POSITIVE = exact output
+            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+        });
         
-    //     PoolSwapTest.TestSettings memory testSettings = PoolSwapTest.TestSettings({
-    //         takeClaims: false,
-    //         settleUsingBurn: false
-    //     });
+        PoolSwapTest.TestSettings memory testSettings = PoolSwapTest.TestSettings({
+            takeClaims: false,
+            settleUsingBurn: false
+        });
         
-    //     // Should revert with ExactOutputNotAllowed
-    //     vm.expectRevert(); // The custom error will be encoded in the revert
-    //     swapRouter.swap{value: 1 ether}(pool, params, testSettings, "");
-    // }
+        // Should revert with ExactOutputNotAllowed
+        vm.expectRevert(); // The custom error will be encoded in the revert
+        swapRouter.swap{value: 1 ether}(pool, params, testSettings, "");
+    }
 
     // Add this helper function to receive ETH refunds from the swap router
     receive() external payable {}

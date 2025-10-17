@@ -14,6 +14,7 @@ import {CurrencySettler} from "v4-core/test/utils/CurrencySettler.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {ModifyLiquidityParams, SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeSwapDelta.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 
 import "./Pebble.sol";
 import "./IStoneQuarry.sol";
@@ -32,8 +33,17 @@ contract StoneQuarryHook is BaseHook {
     uint128 private constant TOTAL_BIPS = 10000;
     /// @notice Default fee rate (10%)
     uint128 private constant FEE = 1000;
+    /// @notice Maximum price limit for swaps
+    uint160 private constant MAX_PRICE_LIMIT = TickMath.MAX_SQRT_PRICE - 1;
     /// @notice The address for the stone quarry
     address public immutable quarryAddress;
+
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    /*                   STATE VARIABLES                   */
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+
+    /// @notice Flag to prevent recursive fee collection during internal swaps
+    bool private processingFees;
 
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                    CUSTOM ERRORS                    */
@@ -115,7 +125,7 @@ contract StoneQuarryHook is BaseHook {
     /// @param params Swap parameters including direction and amount
     /// @param delta Balance changes resulting from the swap
     /// @return Hook selector and fee amount taken
-    /// @dev Calculates dynamic fees, takes fee from swap, and distributes to recipients
+    /// @dev Calculates fees, takes fee from swap, converts to ETH if needed, and sends to quarry
     function _afterSwap(
         address,
         PoolKey calldata key,
@@ -123,6 +133,15 @@ contract StoneQuarryHook is BaseHook {
         BalanceDelta delta,
         bytes calldata
     ) internal override returns (bytes4, int128) {
+        // Skip fee processing if we're doing an internal swap to convert fees
+        // But still need to handle Pebble transfer allowance
+        if (processingFees) {
+            uint256 pebbleAmount =
+                delta.amount1() < 0 ? uint256(int256(-delta.amount1())) : uint256(int256(delta.amount1()));
+            Pebble(Currency.unwrap(key.currency1)).increaseTransferAllowance(pebbleAmount);
+            return (BaseHook.afterSwap.selector, 0);
+        }
+
         if (params.amountSpecified > 0) {
             revert ExactOutputNotAllowed();
         }
@@ -134,6 +153,7 @@ contract StoneQuarryHook is BaseHook {
 
         if (swapAmount < 0) swapAmount = -swapAmount;
         
+        bool ethFee = Currency.unwrap(feeCurrency) == address(0);
         uint256 feeAmount = uint128(swapAmount) * FEE / TOTAL_BIPS;
 
         // regardless if PEBBLE is inbound or outbound from PoolManager, we need to set the transfer allowance
@@ -153,11 +173,47 @@ contract StoneQuarryHook is BaseHook {
 
         poolManager.take(feeCurrency, address(this), feeAmount);
 
-        // Send fees to quarry by settling from hook to pool manager and minting to quarry
-        feeCurrency.settle(poolManager, address(this), feeAmount, false);
-        poolManager.mint(quarryAddress, feeCurrency.toId(), feeAmount);
+        // Convert fee to ETH if needed, then send to quarry
+        uint256 feeInETH;
+        if (!ethFee) {
+            // Fee is in Pebble, swap it to ETH (set flag to avoid recursive fee)
+            processingFees = true;
+            feeInETH = _swapPebbleToEth(key, feeAmount);
+            processingFees = false;
+        } else {
+            // Fee is already in ETH
+            feeInETH = feeAmount;
+        }
+
+        // Send ETH fees directly to quarry
+        SafeTransferLib.forceSafeTransferETH(quarryAddress, feeInETH);
 
         return (BaseHook.afterSwap.selector, feeAmount.toInt128());
+    }
+
+    /// @notice Swaps Pebble fees to ETH
+    /// @param key The pool key for the swap
+    /// @param amount The amount of Pebble to swap
+    /// @return The amount of ETH received from the swap
+    /// @dev Internal function to convert Pebble fees to ETH before sending to quarry
+    function _swapPebbleToEth(PoolKey memory key, uint256 amount) internal returns (uint256) {
+        uint256 ethBefore = address(this).balance;
+
+        BalanceDelta delta = poolManager.swap(
+            key,
+            SwapParams({
+                zeroForOne: false, 
+                amountSpecified: -int256(amount), 
+                sqrtPriceLimitX96: MAX_PRICE_LIMIT
+            }),
+            bytes("")
+        );
+
+        // Handle settlements - it's ALWAYS a oneForZero swap (Pebble -> ETH)
+        key.currency1.settle(poolManager, address(this), uint256(int256(-delta.amount1())), false);
+        key.currency0.take(poolManager, address(this), uint256(int256(delta.amount0())), false);
+
+        return address(this).balance - ethBefore;
     }
 
     receive() external payable {}

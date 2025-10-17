@@ -10,7 +10,7 @@ To-Do:
 [ ] Implementar un TWAP para el vender las rocas.
 
 Doing
-[ ] Hacer flow de testeo para token tax y non-transfer
+[ ] Add feature so that the contract can acquire a rock if it has the money.
 
 Done
 
@@ -20,3 +20,4 @@ Done
 [x] Add foundry test to check that the token was deployed correctly and we have the required supply in the quarry.
 [x] Add liquidity to uniswap v4
 [x] Add a transfer fee to the token (of 1)
+[x] Hacer flow de testeo para token tax y non-transfer
