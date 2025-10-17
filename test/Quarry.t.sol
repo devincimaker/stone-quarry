@@ -18,6 +18,7 @@ import { console } from "forge-std/console.sol";
 import { StoneQuarry } from "../src/StoneQuarry.sol";
 import { Pebble } from "../src/Pebble.sol";
 import { StoneQuarryHook } from "../src/StoneQuarryHook.sol";
+import { MiniRock } from "../src/MiniRock.sol";
 
 contract QuarryTest is Test {
     using PoolIdLibrary for PoolKey;
@@ -27,6 +28,7 @@ contract QuarryTest is Test {
     StoneQuarry public quarry;
     StoneQuarryHook public hook;
     Pebble public pebble;
+    MiniRock public miniRock;
 
     address private constant posm = 0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e;
     address private constant permit2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
@@ -453,5 +455,326 @@ contract QuarryTest is Test {
 
     // Add this helper function to receive ETH refunds from the swap router
     receive() external payable {}
+
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    /*                  MINIROCK NFT TESTS                 */
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+
+    function test_DeployMiniRock() public {
+        // Deploy MiniRock contract
+        quarry.deployMiniRock();
+        
+        // Get the deployed MiniRock address
+        miniRock = quarry.miniRock();
+        
+        // Verify it's deployed and configured correctly
+        assertNotEq(address(miniRock), address(0), "MiniRock should be deployed");
+        assertEq(miniRock.stoneQuarry(), address(quarry), "StoneQuarry address should match");
+        assertEq(miniRock.totalSupply(), 0, "Initial supply should be 0");
+        assertEq(miniRock.name(), "MiniRock", "Name should be MiniRock");
+        assertEq(miniRock.symbol(), "MINIROCK", "Symbol should be MINIROCK");
+    }
+
+    function test_UpdateMintPrice() public {
+        uint256 newPrice = 0.01 ether;
+        
+        // Update mint price
+        quarry.updateMintPrice(newPrice);
+        
+        // Verify the price was updated
+        assertEq(quarry.mintPrice(), newPrice, "Mint price should be updated");
+    }
+
+    function test_UpdateWaitPeriod() public {
+        uint256 newPeriod = 2 days;
+        
+        // Update wait period
+        quarry.updateWaitPeriod(newPeriod);
+        
+        // Verify the wait period was updated
+        assertEq(quarry.waitPeriod(), newPeriod, "Wait period should be updated");
+    }
+
+    function test_MintMiniRock() public {
+        // Setup: Deploy MiniRock and acquire a rock
+        quarry.deployMiniRock();
+        miniRock = quarry.miniRock();
+        
+        // Set mint price
+        quarry.updateMintPrice(0.01 ether);
+        
+        // Give quarry enough ETH to buy a rock
+        vm.deal(address(quarry), 1000 ether);
+        quarry.acquireRock(20);
+        
+        // Verify rocks acquired
+        assertEq(quarry.rocksAcquired(), 1, "Should have 1 rock acquired");
+        
+        // Give user ETH to mint
+        address minter = address(0x1234);
+        vm.deal(minter, 1 ether);
+        
+        // Mint a MiniRock
+        vm.prank(minter);
+        quarry.mintMiniRock{value: 0.01 ether}();
+        
+        // Verify the mint
+        assertEq(miniRock.totalSupply(), 1, "Total supply should be 1");
+        assertEq(miniRock.ownerOf(1), minter, "Minter should own token 1");
+        assertEq(quarry.lastMintTimestamp(), block.timestamp, "Last mint timestamp should be updated");
+    }
+
+    function test_MintMiniRock_RevertWhenNotDeployed() public {
+        // Try to mint without deploying MiniRock
+        vm.expectRevert(StoneQuarry.MiniRockNotDeployed.selector);
+        quarry.mintMiniRock{value: 0.01 ether}();
+    }
+
+    function test_MintMiniRock_RevertWhenInsufficientPayment() public {
+        // Setup: Deploy MiniRock and acquire a rock
+        quarry.deployMiniRock();
+        quarry.updateMintPrice(0.01 ether);
+        
+        vm.deal(address(quarry), 1000 ether);
+        quarry.acquireRock(20);
+        
+        // Try to mint with insufficient payment
+        address minter = address(0x1234);
+        vm.deal(minter, 1 ether);
+        
+        vm.prank(minter);
+        vm.expectRevert(StoneQuarry.InsufficientPayment.selector);
+        quarry.mintMiniRock{value: 0.005 ether}();
+    }
+
+    function test_MintMiniRock_RevertWhenNoRocksAcquired() public {
+        // Setup: Deploy MiniRock but don't acquire any rocks
+        quarry.deployMiniRock();
+        quarry.updateMintPrice(0.01 ether);
+        
+        // Try to mint without any rocks acquired
+        address minter = address(0x1234);
+        vm.deal(minter, 1 ether);
+        
+        vm.prank(minter);
+        vm.expectRevert(StoneQuarry.MiniRockNotAvailable.selector);
+        quarry.mintMiniRock{value: 0.01 ether}();
+    }
+
+    function test_MintMiniRock_RevertOnCooldown() public {
+        // Setup: Deploy MiniRock and acquire a rock
+        quarry.deployMiniRock();
+        miniRock = quarry.miniRock();
+        quarry.updateMintPrice(0.01 ether);
+        
+        vm.deal(address(quarry), 1000 ether);
+        quarry.acquireRock(20);
+        
+        // First mint
+        address minter = address(0x1234);
+        vm.deal(minter, 1 ether);
+        
+        vm.prank(minter);
+        quarry.mintMiniRock{value: 0.01 ether}();
+        
+        // Try to mint again immediately (should revert)
+        vm.prank(minter);
+        vm.expectRevert(StoneQuarry.MintCooldownActive.selector);
+        quarry.mintMiniRock{value: 0.01 ether}();
+    }
+
+    function test_MintMiniRock_AfterCooldown() public {
+        // Setup: Deploy MiniRock and acquire a rock
+        quarry.deployMiniRock();
+        miniRock = quarry.miniRock();
+        quarry.updateMintPrice(0.01 ether);
+        
+        vm.deal(address(quarry), 1000 ether);
+        quarry.acquireRock(20);
+        
+        // First mint
+        address minter = address(0x1234);
+        vm.deal(minter, 1 ether);
+        
+        vm.prank(minter);
+        quarry.mintMiniRock{value: 0.01 ether}();
+        
+        // Fast forward 1 day
+        vm.warp(block.timestamp + 1 days);
+        
+        // Second mint should succeed
+        vm.prank(minter);
+        quarry.mintMiniRock{value: 0.01 ether}();
+        
+        assertEq(miniRock.totalSupply(), 2, "Total supply should be 2");
+    }
+
+    function test_MintMiniRock_MaxSupplyEnforcement() public {
+        // Setup: Deploy MiniRock and acquire a rock
+        quarry.deployMiniRock();
+        miniRock = quarry.miniRock();
+        quarry.updateMintPrice(0.01 ether);
+        quarry.updateWaitPeriod(0); // Remove wait period for faster testing
+        
+        vm.deal(address(quarry), 1000 ether);
+        quarry.acquireRock(20); // 1 rock = 100 MiniRocks max
+        
+        address minter = address(0x1234);
+        vm.deal(minter, 10 ether);
+        
+        // Mint 100 MiniRocks (the maximum for 1 rock)
+        for (uint256 i = 0; i < 100; i++) {
+            vm.prank(minter);
+            quarry.mintMiniRock{value: 0.01 ether}();
+        }
+        
+        assertEq(miniRock.totalSupply(), 100, "Should have minted 100 MiniRocks");
+        
+        // Try to mint one more (should revert)
+        vm.prank(minter);
+        vm.expectRevert(StoneQuarry.MiniRockNotAvailable.selector);
+        quarry.mintMiniRock{value: 0.01 ether}();
+    }
+
+    function test_MintMiniRock_RocksAcquiredIncrement() public {
+        // Setup: Deploy MiniRock
+        quarry.deployMiniRock();
+        miniRock = quarry.miniRock();
+        quarry.updateMintPrice(0.01 ether);
+        quarry.updateWaitPeriod(0); // Remove wait period for faster testing
+        
+        // Give quarry enough ETH to buy a rock
+        vm.deal(address(quarry), 1000 ether);
+        
+        // Verify initial state
+        assertEq(quarry.rocksAcquired(), 0, "Should start with 0 rocks");
+        
+        // Acquire 1 rock (should increment counter)
+        quarry.acquireRock(20);
+        
+        assertEq(quarry.rocksAcquired(), 1, "Should have 1 rock acquired");
+        
+        address minter = address(0x1234);
+        vm.deal(minter, 50 ether);
+        
+        // Mint 50 MiniRocks (should succeed as limit is 100 with 1 rock)
+        for (uint256 i = 0; i < 50; i++) {
+            vm.prank(minter);
+            quarry.mintMiniRock{value: 0.01 ether}();
+        }
+        
+        assertEq(miniRock.totalSupply(), 50, "Should have minted 50 MiniRocks");
+        
+        // Verify we can still mint more (haven't hit the 100 limit)
+        vm.prank(minter);
+        quarry.mintMiniRock{value: 0.01 ether}();
+        
+        assertEq(miniRock.totalSupply(), 51, "Should have minted 51 MiniRocks");
+    }
+
+    function test_MiniRock_PaymentSentToQuarry() public {
+        // Setup: Deploy MiniRock and acquire a rock
+        quarry.deployMiniRock();
+        miniRock = quarry.miniRock();
+        quarry.updateMintPrice(0.01 ether);
+        
+        vm.deal(address(quarry), 1000 ether);
+        quarry.acquireRock(20);
+        uint256 quarryBalanceAfterRockBuy = address(quarry).balance;
+        
+        // Mint a MiniRock
+        address minter = address(0x1234);
+        vm.deal(minter, 1 ether);
+        
+        vm.prank(minter);
+        quarry.mintMiniRock{value: 0.01 ether}();
+        
+        // Verify the payment went to the quarry
+        uint256 quarryBalanceAfterMint = address(quarry).balance;
+        assertEq(
+            quarryBalanceAfterMint,
+            quarryBalanceAfterRockBuy + 0.01 ether,
+            "Quarry should receive mint payment"
+        );
+    }
+
+    function test_MiniRock_TokenURI() public {
+        // Setup: Deploy MiniRock and mint a token
+        quarry.deployMiniRock();
+        miniRock = quarry.miniRock();
+        quarry.updateMintPrice(0.01 ether);
+        
+        vm.deal(address(quarry), 1000 ether);
+        quarry.acquireRock(20);
+        
+        address minter = address(0x1234);
+        vm.deal(minter, 1 ether);
+        
+        vm.prank(minter);
+        quarry.mintMiniRock{value: 0.01 ether}();
+        
+        // Get token URI
+        string memory uri = miniRock.tokenURI(1);
+        
+        // Verify it returns a valid URI
+        assertEq(uri, "https://minirock.example/metadata.json", "Should return valid token URI");
+    }
+
+    function test_CompleteFlow_AcquireAndMintMultiple() public {
+        emit log_string("=== Testing Complete MiniRock Flow ===");
+        
+        // Deploy MiniRock
+        quarry.deployMiniRock();
+        miniRock = quarry.miniRock();
+        
+        // Set mint price to 0.01 ETH
+        quarry.updateMintPrice(0.01 ether);
+        
+        // Accumulate fees through swaps (reusing existing test logic)
+        vm.deal(address(this), 2000 ether);
+        
+        uint256[5] memory swapSizes = [
+            uint256(100 ether),
+            150 ether,
+            200 ether,
+            75 ether,
+            125 ether
+        ];
+        
+        for (uint256 i = 0; i < swapSizes.length; i++) {
+            _swapETHForPebble(swapSizes[i]);
+        }
+        
+        emit log_named_uint("Quarry balance after swaps", address(quarry).balance);
+        
+        // Acquire a rock
+        quarry.acquireRock(20);
+        
+        emit log_named_uint("Rocks acquired", quarry.rocksAcquired());
+        
+        // Mint 5 MiniRocks with 1 day wait between each
+        address[] memory minters = new address[](5);
+        for (uint256 i = 0; i < 5; i++) {
+            minters[i] = address(uint160(0x5000 + i));
+            vm.deal(minters[i], 1 ether);
+        }
+        
+        for (uint256 i = 0; i < 5; i++) {
+            vm.prank(minters[i]);
+            quarry.mintMiniRock{value: 0.01 ether}();
+            
+            emit log_named_uint("Minted token", i + 1);
+            emit log_named_address("Owner", miniRock.ownerOf(i + 1));
+            
+            // Fast forward 1 day for next mint
+            if (i < 4) {
+                vm.warp(block.timestamp + 1 days);
+            }
+        }
+        
+        assertEq(miniRock.totalSupply(), 5, "Should have minted 5 MiniRocks");
+        
+        emit log_string("=== Complete Flow Test Passed ===");
+    }
 
 }

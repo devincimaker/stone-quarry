@@ -17,6 +17,7 @@ import { Ownable } from "solady/auth/Ownable.sol";
 import "./Pebble.sol";
 import "./StoneQuarryHook.sol";
 import "./IEtherRockOG.sol";
+import "./MiniRock.sol";
 
 contract StoneQuarry is Ownable {
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
@@ -24,6 +25,8 @@ contract StoneQuarry is Ownable {
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /// @notice The strategy token contract
     Pebble public pebble;
+    /// @notice The MiniRock NFT contract
+    MiniRock public miniRock;
     /// @notice How much eth to send when deploying the pool
     uint256 private constant ethToPair = 2 wei;
     /// @notice The Uniswap position manager
@@ -50,6 +53,14 @@ contract StoneQuarry is Ownable {
     bool public loadingLiquidity;
     ///@notice Tracks if the stone quarry started working 
     bool public quarryStarted;
+    /// @notice Counter for the number of rocks acquired by the contract
+    uint256 public rocksAcquired;
+    /// @notice Timestamp of the last MiniRock mint
+    uint256 public lastMintTimestamp;
+    /// @notice Price to mint a MiniRock (in wei)
+    uint256 public mintPrice;
+    /// @notice Wait period between mints (in seconds)
+    uint256 public waitPeriod = 1 days;
 
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                    CUSTOM ERRORS                    */
@@ -68,11 +79,23 @@ contract StoneQuarry is Ownable {
     /// @notice Not the owner of the rock
     error NotOwnerOfRock();
     /// @notice Already the owner of the rock
-    error AlreadyOwnerOfRock(); 
+    error AlreadyOwnerOfRock();
+    /// @notice No more MiniRocks available to mint
+    error MiniRockNotAvailable();
+    /// @notice Must wait before minting next MiniRock
+    error MintCooldownActive();
+    /// @notice Insufficient payment for minting MiniRock
+    error InsufficientPayment();
+    /// @notice MiniRock contract not deployed yet
+    error MiniRockNotDeployed(); 
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                    CUSTOM EVENTS                    */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     event QuarryOpen();
+    event MiniRockMinted(address indexed minter, uint256 indexed tokenId, uint256 price);
+    event MintPriceUpdated(uint256 newPrice);
+    event WaitPeriodUpdated(uint256 newPeriod);
+    event MiniRockDeployed(address indexed miniRockAddress);
 
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                     CONSTRUCTOR                     */
@@ -106,13 +129,68 @@ contract StoneQuarry is Ownable {
         // require that we are the owner of the rock
         (address newOwner, , , ) = etherRockOG.rocks(rockNumber);
         if (newOwner != address(this)) revert NotOwnerOfRock();
+        
+        // Increment rocks acquired counter
+        rocksAcquired++;
     }
 
-    // Add a function to buy a new mini rock if it is available.
+    /// @notice Mint a MiniRock NFT by paying the required price
+    /// @dev Anyone can call this function as long as they pay the mint price
+    /// @dev Must wait for the cooldown period between mints
+    /// @dev Can only mint if there are available MiniRocks based on rocks acquired
+    function mintMiniRock() external payable {
+        if (address(miniRock) == address(0)) revert MiniRockNotDeployed();
+        
+        // Check if there are available MiniRocks to mint
+        // Each rock allows 100 MiniRocks to be minted
+        uint256 maxSupply = rocksAcquired * 100;
+        uint256 currentSupply = miniRock.totalSupply();
+        
+        if (currentSupply >= maxSupply) revert MiniRockNotAvailable();
+        
+        // Check wait period (first mint is allowed immediately)
+        if (lastMintTimestamp > 0 && block.timestamp < lastMintTimestamp + waitPeriod) {
+            revert MintCooldownActive();
+        }
+        
+        // Check payment
+        if (msg.value < mintPrice) revert InsufficientPayment();
+        
+        // Update last mint timestamp
+        lastMintTimestamp = block.timestamp;
+        
+        // Mint the MiniRock NFT
+        uint256 tokenId = miniRock.mint(msg.sender);
+        
+        emit MiniRockMinted(msg.sender, tokenId, msg.value);
+    } 
 
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                    ADMIN FUNCTIONS                  */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+
+    /// @notice Deploy the MiniRock NFT contract
+    /// @dev Only callable by owner, should be called after quarry starts
+    function deployMiniRock() external onlyOwner {
+        miniRock = new MiniRock(address(this));
+        emit MiniRockDeployed(address(miniRock));
+    }
+
+    /// @notice Update the price to mint a MiniRock
+    /// @param _newPrice New mint price in wei
+    /// @dev Only callable by owner
+    function updateMintPrice(uint256 _newPrice) external onlyOwner {
+        mintPrice = _newPrice;
+        emit MintPriceUpdated(_newPrice);
+    }
+
+    /// @notice Update the wait period between mints
+    /// @param _newPeriod New wait period in seconds
+    /// @dev Only callable by owner
+    function updateWaitPeriod(uint256 _newPeriod) external onlyOwner {
+        waitPeriod = _newPeriod;
+        emit WaitPeriodUpdated(_newPeriod);
+    }
 
     /// @notice Updates the hook attached to new NFTStrategy pools
     /// @param _hookAddress New Uniswap v4 hook address
