@@ -10,12 +10,13 @@ To-Do:
 [ ] Implementar un TWAP para el vender las rocas.
 
 Doing
-[ ] Remove hook from the quarry constructor.
-[ ] Make the token non-transferable
-[ ] Add a transfer fee to the token (of 1)
+[ ] Hacer flow de testeo para token tax y non-transfer
 
 Done
 
-- [x] Deploy the token when we launch the quarry.
-      [x] Add foundry test to check that the token was deployed correctly and we have the required supply in the quarry.
-      [x] Add liquidity to uniswap v4
+[x] Make the token non-transferable
+[x] Remove hook from the quarry constructor.
+[x] Deploy the token when we launch the quarry.
+[x] Add foundry test to check that the token was deployed correctly and we have the required supply in the quarry.
+[x] Add liquidity to uniswap v4
+[x] Add a transfer fee to the token (of 1)

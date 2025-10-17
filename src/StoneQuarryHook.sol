@@ -14,38 +14,50 @@ import {CurrencySettler} from "v4-core/test/utils/CurrencySettler.sol";
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 import {ModifyLiquidityParams, SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeSwapDelta.sol";
-import "./Pebble.sol";
 
-contract QuarryHook is BaseHook {
+import "./Pebble.sol";
+import "./IStoneQuarry.sol";
+
+contract StoneQuarryHook is BaseHook {
     using PoolIdLibrary for PoolKey;
     using CurrencySettler for Currency;
     using SafeCast for uint256;
     using SafeCast for int128;
 
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    /*                      CONSTANTS                      */
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    
+    /// @notice Total basis points for percentage calculations
+    uint128 private constant TOTAL_BIPS = 10000;
+    /// @notice Default fee rate (10%)
+    uint128 private constant FEE = 1000;
+    /// @notice The address for the stone quarry
+    address public immutable quarryAddress;
+
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    /*                    CUSTOM ERRORS                    */
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+
     error NotQuarry();
     error ExactOutputNotAllowed();
 
-    uint128 private constant TOTAL_BIPS = 10000;
-    uint128 private constant FEE = 1000; // 10%
-
-    address public immutable quarryAddress;
-    address public immutable pebbleAddress;
-    bool public loadingLiquidity;
-
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    /*                     CONSTRUCTOR                     */
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+        
+    /// @notice Constructor initializes the hook with required dependencies
+    /// @param _poolManager The Uniswap V4 Pool Manager interface
+    /// @param _quarryAddress The NFTStrategyFactory contract
     constructor(
         address _poolManager,
-        address _quarryAddress,
-        address _pebbleAddress
+        address _quarryAddress
     ) BaseHook(IPoolManager(_poolManager)) {
         quarryAddress = _quarryAddress;
-        pebbleAddress = _pebbleAddress;
     }
 
-    function setLoadingLiquidity(bool _loading) external {
-        require(msg.sender == quarryAddress, "Not quarry");
-        loadingLiquidity = _loading;
-    }
-
+    /// @notice Returns the hook's permissions for the Uniswap V4 pool
+    /// @return Hooks.Permissions struct indicating which hooks are enabled
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
             beforeInitialize: true,
@@ -65,13 +77,21 @@ contract QuarryHook is BaseHook {
         });
     }
 
+    /// @notice Validates initialization of a new pool
+    /// @return Selector indicating successful hook execution
+    /// @dev Validates call is from the quarry
     function _beforeInitialize(address, PoolKey calldata, uint160) internal view override returns (bytes4) {
-        if (!loadingLiquidity) {
+        if (!IStoneQuarry(quarryAddress).loadingLiquidity()) {
             revert NotQuarry();
         }
         return BaseHook.beforeInitialize.selector;
     }
 
+    /// @notice Validates liquidity addition to a pool
+    /// @param key The pool key containing currency pair information
+    /// @param delta The balance changes from the liquidity addition
+    /// @return Hook selector and zero delta
+    /// @dev Only allows liquidity addition during factory loading, sets transfer allowance
     function _afterAddLiquidity(
         address,
         PoolKey calldata key,
@@ -80,7 +100,7 @@ contract QuarryHook is BaseHook {
         BalanceDelta,
         bytes calldata
     ) internal override returns (bytes4, BalanceDelta) {
-        if (!loadingLiquidity) {
+        if (!IStoneQuarry(quarryAddress).loadingLiquidity()) {
             revert NotQuarry();
         } else {
             // we are loading liquidity so admit a transfer allowance
@@ -90,6 +110,12 @@ contract QuarryHook is BaseHook {
         return (BaseHook.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
+    /// @notice Processes swap events and takes the swap fee
+    /// @param key The pool key containing token pair and fee information
+    /// @param params Swap parameters including direction and amount
+    /// @param delta Balance changes resulting from the swap
+    /// @return Hook selector and fee amount taken
+    /// @dev Calculates dynamic fees, takes fee from swap, and distributes to recipients
     function _afterSwap(
         address,
         PoolKey calldata key,
@@ -115,7 +141,7 @@ contract QuarryHook is BaseHook {
             delta.amount1() < 0 ? uint256(int256(-delta.amount1())) : uint256(int256(delta.amount1()));
 
         if (feeAmount == 0) {
-            Pebble(pebbleAddress).increaseTransferAllowance(pebbleAmountToTransfer);
+            Pebble(Currency.unwrap(key.currency1)).increaseTransferAllowance(pebbleAmountToTransfer);
             return (BaseHook.afterSwap.selector, 0);
         }
 
@@ -123,12 +149,13 @@ contract QuarryHook is BaseHook {
         // for exact inputs (ETH --> ??? PEBBLE) the fee is skimmed from delta.amount1() but its transferred to the hook
         pebbleAmountToTransfer += (feeCurrency == key.currency1) ? feeAmount : 0;
 
-        Pebble(pebbleAddress).increaseTransferAllowance(pebbleAmountToTransfer);
+        Pebble(Currency.unwrap(key.currency1)).increaseTransferAllowance(pebbleAmountToTransfer);
 
         poolManager.take(feeCurrency, address(this), feeAmount);
 
-        // Send fees to quarry using settle
-        feeCurrency.settle(poolManager, quarryAddress, feeAmount, false);
+        // Send fees to quarry by settling from hook to pool manager and minting to quarry
+        feeCurrency.settle(poolManager, address(this), feeAmount, false);
+        poolManager.mint(quarryAddress, feeCurrency.toId(), feeAmount);
 
         return (BaseHook.afterSwap.selector, feeAmount.toInt128());
     }

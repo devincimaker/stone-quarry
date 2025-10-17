@@ -12,7 +12,7 @@ import { IPoolInitializer_v4 } from "v4-periphery/src/interfaces/IPoolInitialize
 import { Actions } from "v4-periphery/src/libraries/Actions.sol";
 import { TickMath } from "v4-core/src/libraries/TickMath.sol";
 import { LiquidityAmounts } from "v4-core/test/utils/LiquidityAmounts.sol";
-import {Ownable} from "solady/auth/Ownable.sol";
+import { Ownable } from "solady/auth/Ownable.sol";
 
 import "./Pebble.sol";
 import "./StoneQuarryHook.sol";
@@ -93,7 +93,7 @@ contract StoneQuarry is Ownable {
         hookAddress = _hookAddress;
     }
 
-    function startQuarry() external onlyOwner {
+    function startQuarry() external payable onlyOwner {
         if (hookAddress == address(0)) revert HookNotSet();
         if (quarryStarted) revert AlreadyStarted();
 
@@ -101,6 +101,7 @@ contract StoneQuarry is Ownable {
         pebble = new Pebble(address(poolManager), hookAddress, msg.sender);
 
         _loadLiquidity();
+        quarryStarted = true;
     }
 
     function _loadLiquidity() internal {
