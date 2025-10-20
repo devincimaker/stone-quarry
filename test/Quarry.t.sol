@@ -516,7 +516,7 @@ contract QuarryTest is Test {
         
         // Mint a MiniRock
         vm.prank(minter);
-        quarry.mintMiniRock{value: 0.01 ether}();
+        quarry.mintMiniRock{value: 0.01 ether}(20);
         
         // Verify the mint
         assertEq(miniRock.totalSupply(), 1, "Total supply should be 1");
@@ -527,7 +527,7 @@ contract QuarryTest is Test {
     function test_MintMiniRock_RevertWhenNotDeployed() public {
         // Try to mint without deploying MiniRock
         vm.expectRevert(StoneQuarry.MiniRockNotDeployed.selector);
-        quarry.mintMiniRock{value: 0.01 ether}();
+        quarry.mintMiniRock{value: 0.01 ether}(20);
     }
 
     function test_MintMiniRock_RevertWhenInsufficientPayment() public {
@@ -544,7 +544,7 @@ contract QuarryTest is Test {
         
         vm.prank(minter);
         vm.expectRevert(StoneQuarry.InsufficientPayment.selector);
-        quarry.mintMiniRock{value: 0.005 ether}();
+        quarry.mintMiniRock{value: 0.005 ether}(20);
     }
 
     function test_MintMiniRock_RevertWhenNoRocksAcquired() public {
@@ -557,8 +557,8 @@ contract QuarryTest is Test {
         vm.deal(minter, 1 ether);
         
         vm.prank(minter);
-        vm.expectRevert(StoneQuarry.MiniRockNotAvailable.selector);
-        quarry.mintMiniRock{value: 0.01 ether}();
+        vm.expectRevert(StoneQuarry.RockNotAcquired.selector);
+        quarry.mintMiniRock{value: 0.01 ether}(20);
     }
 
     function test_MintMiniRock_RevertOnCooldown() public {
@@ -575,12 +575,12 @@ contract QuarryTest is Test {
         vm.deal(minter, 1 ether);
         
         vm.prank(minter);
-        quarry.mintMiniRock{value: 0.01 ether}();
+        quarry.mintMiniRock{value: 0.01 ether}(20);
         
         // Try to mint again immediately (should revert)
         vm.prank(minter);
         vm.expectRevert(StoneQuarry.MintCooldownActive.selector);
-        quarry.mintMiniRock{value: 0.01 ether}();
+        quarry.mintMiniRock{value: 0.01 ether}(20);
     }
 
     function test_MintMiniRock_AfterCooldown() public {
@@ -597,14 +597,14 @@ contract QuarryTest is Test {
         vm.deal(minter, 1 ether);
         
         vm.prank(minter);
-        quarry.mintMiniRock{value: 0.01 ether}();
+        quarry.mintMiniRock{value: 0.01 ether}(20);
         
         // Fast forward 1 day
         vm.warp(block.timestamp + 1 days);
         
         // Second mint should succeed
         vm.prank(minter);
-        quarry.mintMiniRock{value: 0.01 ether}();
+        quarry.mintMiniRock{value: 0.01 ether}(20);
         
         assertEq(miniRock.totalSupply(), 2, "Total supply should be 2");
     }
@@ -625,7 +625,7 @@ contract QuarryTest is Test {
         // Mint 100 MiniRocks (the maximum for 1 rock)
         for (uint256 i = 0; i < 100; i++) {
             vm.prank(minter);
-            quarry.mintMiniRock{value: 0.01 ether}();
+            quarry.mintMiniRock{value: 0.01 ether}(20);
         }
         
         assertEq(miniRock.totalSupply(), 100, "Should have minted 100 MiniRocks");
@@ -633,7 +633,7 @@ contract QuarryTest is Test {
         // Try to mint one more (should revert)
         vm.prank(minter);
         vm.expectRevert(StoneQuarry.MiniRockNotAvailable.selector);
-        quarry.mintMiniRock{value: 0.01 ether}();
+        quarry.mintMiniRock{value: 0.01 ether}(20);
     }
 
     function test_MintMiniRock_RocksAcquiredIncrement() public {
@@ -660,14 +660,14 @@ contract QuarryTest is Test {
         // Mint 50 MiniRocks (should succeed as limit is 100 with 1 rock)
         for (uint256 i = 0; i < 50; i++) {
             vm.prank(minter);
-            quarry.mintMiniRock{value: 0.01 ether}();
+            quarry.mintMiniRock{value: 0.01 ether}(20);
         }
         
         assertEq(miniRock.totalSupply(), 50, "Should have minted 50 MiniRocks");
         
         // Verify we can still mint more (haven't hit the 100 limit)
         vm.prank(minter);
-        quarry.mintMiniRock{value: 0.01 ether}();
+        quarry.mintMiniRock{value: 0.01 ether}(20);
         
         assertEq(miniRock.totalSupply(), 51, "Should have minted 51 MiniRocks");
     }
@@ -687,7 +687,7 @@ contract QuarryTest is Test {
         vm.deal(minter, 1 ether);
         
         vm.prank(minter);
-        quarry.mintMiniRock{value: 0.01 ether}();
+        quarry.mintMiniRock{value: 0.01 ether}(20);
         
         // Verify the payment went to the quarry
         uint256 quarryBalanceAfterMint = address(quarry).balance;
@@ -711,13 +711,14 @@ contract QuarryTest is Test {
         vm.deal(minter, 1 ether);
         
         vm.prank(minter);
-        quarry.mintMiniRock{value: 0.01 ether}();
+        quarry.mintMiniRock{value: 0.01 ether}(20);
         
         // Get token URI
         string memory uri = miniRock.tokenURI(1);
         
-        // Verify it returns a valid URI
-        assertEq(uri, "https://minirock.example/metadata.json", "Should return valid token URI");
+        // Verify it returns a valid URI with JSON metadata including source rock
+        string memory expectedUri = 'data:application/json;utf8,{"name":"MiniRock #1","description":"A fragment from EtherRock #20","sourceRock":20}';
+        assertEq(uri, expectedUri, "Should return valid token URI with source rock metadata");
     }
 
     function test_CompleteFlow_AcquireAndMintMultiple() public {
@@ -761,7 +762,7 @@ contract QuarryTest is Test {
         
         for (uint256 i = 0; i < 5; i++) {
             vm.prank(minters[i]);
-            quarry.mintMiniRock{value: 0.01 ether}();
+            quarry.mintMiniRock{value: 0.01 ether}(20);
             
             emit log_named_uint("Minted token", i + 1);
             emit log_named_address("Owner", miniRock.ownerOf(i + 1));
