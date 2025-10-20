@@ -1,18 +1,15 @@
 To-Do:
 
 [ ] Do 100 IPFS images
-[ ] Add tests
-[ ] Figure out if I want to add a way to stop things from going from one individual step to the next.
-[ ] make the contract upgradeable
-[ ] add a forge where someone can burn 100 pieces and get a rock back.
-[ ] Implementar un TWAP para el vender las rocas.
-[ ] Make it so that I can mint multiple rocks simulnaneuosly (mini rocks), so if the quarry acquires more rocks, there's more buy pressure.
-[ ] Add the 10% of rocks that I keep from the mini rocks (I get them but they're locked for a month)
-[ ] Add feature to wrap the rocks into ERC721 so that people can visualize them on etherscan
+[ ] make rocks so that they look pretty, are SVG and respect the style of the original ones.
 
 Doing
-[ ] make rocks so that they look pretty, are SVG and respect the style of the original ones.
-[ ] Add tests for contribution-based MiniRock allocation
+
+[ ] Add feature to wrap the rocks into ERC721 so that people can visualize them on etherscan
+[ ] Implementar un TWAP para el vender las rocas.
+[ ] Add the 10% of rocks that I keep from the mini rocks (I get them but they're locked for a month)
+[ ] make the contract upgradeable
+[ ] add a forge where someone can burn 100 pieces and get a rock back.
 
 Done
 
@@ -26,3 +23,4 @@ Done
 [x] Add a transfer fee to the token (of 1)
 [x] Hacer flow de testeo para token tax y non-transfer
 [x] Add feature so that the contract can acquire a rock if it has the money.
+[x] Make it so that I can mint multiple rocks simulnaneuosly (mini rocks), so if the quarry acquires more rocks, there's more buy pressure.

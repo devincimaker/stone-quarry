@@ -57,8 +57,8 @@ contract StoneQuarry is Ownable {
     uint256 public rocksAcquired;
     /// @notice Timestamp of the last MiniRock mint per rock (rockNumber => timestamp)
     mapping(uint256 => uint256) public lastMintTimestampPerRock;
-    /// @notice Price to mint a MiniRock (in wei)
-    uint256 public mintPrice;
+    /// @notice Price to mint a MiniRock per rock (rockNumber => price)
+    mapping(uint256 => uint256) public mintPricePerRock;
     /// @notice Wait period between mints (in seconds)
     uint256 public waitPeriod = 1 days;
     /// @notice Tracks allocated MiniRocks per user per rock (user => rockNumber => allocated amount)
@@ -105,12 +105,13 @@ contract StoneQuarry is Ownable {
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                    CUSTOM EVENTS                    */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    /// 
     event QuarryOpen();
     event MiniRockMinted(address indexed minter, uint256 indexed tokenId, uint256 price);
     event WaitPeriodUpdated(uint256 newPeriod);
     event MiniRockAllocated(address indexed user, uint256 amount, uint256 contribution, uint256 rockNumber);
     event MiniRocksClaimed(address indexed user, uint256 amount);
-
+    event MintPriceUpdated(uint256 rockNumber, uint256 newPrice);
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                     CONSTRUCTOR                     */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
@@ -172,6 +173,8 @@ contract StoneQuarry is Ownable {
         // Mark rock as acquired and increment counter
         rockAcquired[rockNumber] = true;
         rocksAcquired++;
+
+        mintPricePerRock[rockNumber] = price / 100;
     }
 
     /// @notice Claim allocated MiniRocks from contributing to rock purchases
@@ -217,7 +220,7 @@ contract StoneQuarry is Ownable {
         }
 
         // Check payment
-        if (msg.value < mintPrice) revert InsufficientPayment();
+        if (msg.value < mintPricePerRock[rockNumber]) revert InsufficientPayment();
         
         // Update last mint timestamp
         lastMintTimestampPerRock[rockNumber] = block.timestamp;       
@@ -232,6 +235,15 @@ contract StoneQuarry is Ownable {
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                    ADMIN FUNCTIONS                  */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+
+    /// @notice Update the mint price per rock
+    /// @param rockNumber The rock number to update the mint price for
+    /// @param newPrice The new mint price in wei
+    /// @dev Only callable by owner
+    function updateMintPricePerRock(uint256 rockNumber, uint256 newPrice) external onlyOwner {
+        mintPricePerRock[rockNumber] = newPrice;
+        emit MintPriceUpdated(rockNumber, newPrice);
+    }
 
     /// @notice Update the wait period between mints
     /// @param _newPeriod New wait period in seconds
