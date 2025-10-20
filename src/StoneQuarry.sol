@@ -55,8 +55,8 @@ contract StoneQuarry is Ownable {
     bool public quarryStarted;
     /// @notice Counter for the number of rocks acquired by the contract
     uint256 public rocksAcquired;
-    /// @notice Timestamp of the last MiniRock mint
-    uint256 public lastMintTimestamp;
+    /// @notice Timestamp of the last MiniRock mint per rock (rockNumber => timestamp)
+    mapping(uint256 => uint256) public lastMintTimestampPerRock;
     /// @notice Price to mint a MiniRock (in wei)
     uint256 public mintPrice;
     /// @notice Wait period between mints (in seconds)
@@ -211,16 +211,17 @@ contract StoneQuarry is Ownable {
         if (currentMintedForRock >= maxSupplyForRock) revert MiniRockNotAvailable();
         
         // Check wait period (first mint is allowed immediately)
+        uint256 lastMintTimestamp = lastMintTimestampPerRock[rockNumber];
         if (lastMintTimestamp > 0 && block.timestamp < lastMintTimestamp + waitPeriod) {
             revert MintCooldownActive();
         }
-        
+
         // Check payment
         if (msg.value < mintPrice) revert InsufficientPayment();
         
         // Update last mint timestamp
-        lastMintTimestamp = block.timestamp;
-        
+        lastMintTimestampPerRock[rockNumber] = block.timestamp;       
+
         // Mint the MiniRock NFT from the specified source rock
         uint256 tokenId = miniRock.mint(msg.sender, rockNumber);
         miniRocksMintedPerRock[rockNumber]++;
