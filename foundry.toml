@@ -9,6 +9,8 @@ remappings = [
     "@uniswap/v4-core/=lib/v4-periphery/lib/v4-core/",
     "permit2/=lib/v4-periphery/lib/permit2/",
     "solady/=lib/solady/src/",
+    "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",
+    "@openzeppelin/contracts/=lib/v4-periphery/lib/v4-core/lib/openzeppelin-contracts/contracts/",
 ]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

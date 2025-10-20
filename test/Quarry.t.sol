@@ -14,6 +14,7 @@ import { BalanceDelta } from "v4-core/src/types/BalanceDelta.sol";
 import { TickMath } from "v4-core/src/libraries/TickMath.sol";
 import { Hooks } from "v4-core/src/libraries/Hooks.sol";
 import { console } from "forge-std/console.sol";
+import { ERC1967Proxy } from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import { StoneQuarry } from "../src/StoneQuarry.sol";
 import { Pebble } from "../src/Pebble.sol";
@@ -39,12 +40,17 @@ contract QuarryTest is Test {
     function setUp() public {
         vm.createSelectFork("https://mainnet.infura.io/v3/7e5e10bd463a477eb38669c5ed176e46");
         
-        quarry = new StoneQuarry(
-            posm,
-            permit2,
-            poolManager,
-            dev
+        // Deploy implementation
+        StoneQuarry implementation = new StoneQuarry();
+        
+        // Deploy proxy with initialization
+        ERC1967Proxy proxy = new ERC1967Proxy(
+            address(implementation),
+            abi.encodeCall(StoneQuarry.initialize, (posm, permit2, poolManager, dev))
         );
+        
+        // Cast proxy to StoneQuarry interface
+        quarry = StoneQuarry(payable(address(proxy)));
 
         uint160 flags = uint160(
             Hooks.BEFORE_INITIALIZE_FLAG | 

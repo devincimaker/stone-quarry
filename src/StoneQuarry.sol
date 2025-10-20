@@ -12,7 +12,9 @@ import { IPoolInitializer_v4 } from "v4-periphery/src/interfaces/IPoolInitialize
 import { Actions } from "v4-periphery/src/libraries/Actions.sol";
 import { TickMath } from "v4-core/src/libraries/TickMath.sol";
 import { LiquidityAmounts } from "v4-core/test/utils/LiquidityAmounts.sol";
-import { Ownable } from "solady/auth/Ownable.sol";
+import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import { OwnableUpgradeable } from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import { UUPSUpgradeable } from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 import "./Pebble.sol";
 import "./StoneQuarryHook.sol";
@@ -29,7 +31,7 @@ interface IERC721Receiver {
     ) external returns (bytes4);
 }
 
-contract StoneQuarry is Ownable, IERC721Receiver {
+contract StoneQuarry is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC721Receiver {
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                      CONSTANTS                      */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
@@ -40,11 +42,11 @@ contract StoneQuarry is Ownable, IERC721Receiver {
     /// @notice How much eth to send when deploying the pool
     uint256 private constant ethToPair = 2 wei;
     /// @notice The Uniswap position manager
-    IPositionManager private immutable posm;
+    IPositionManager private posm;
     /// @notice The Uniswap permit2 contract
-    IAllowanceTransfer private immutable permit2;
+    IAllowanceTransfer private permit2;
     /// @notice The Uniswap pool manager
-    IPoolManager private immutable poolManager;
+    IPoolManager private poolManager;
     /// @notice The EtherRockOG contract
     IEtherRockOG public constant etherRockOG = IEtherRockOG(0x41f28833Be34e6EDe3c58D1f597bef429861c4E2);
     /// @notice The EtherRock ERC721 wrapper contract
@@ -79,7 +81,7 @@ contract StoneQuarry is Ownable, IERC721Receiver {
     /// @notice Price to mint a MiniRock per rock (rockNumber => price)
     mapping(uint256 => uint256) public mintPricePerRock;
     /// @notice Wait period between mints (in seconds)
-    uint256 public waitPeriod = 1 days;
+    uint256 public waitPeriod;
     /// @notice Tracks allocated MiniRocks per user per rock (user => rockNumber => allocated amount)
     mapping(address => mapping(uint256 => uint256)) public miniRockAllocations;
     /// @notice Tracks which rocks have been acquired by the contract
@@ -148,22 +150,29 @@ contract StoneQuarry is Ownable, IERC721Receiver {
     event DevMiniRocksClaimed(address indexed dev, uint256 rockNumber, uint256 amount);
     event DevAddressUpdated(address indexed oldAddress, address indexed newAddress);
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
-    /*                     CONSTRUCTOR                     */
+    /*                     INITIALIZER                     */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
 
-    /// @notice Constructor initializes the quarry with required dependencies
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    /// @notice Initializes the upgradeable quarry contract
     /// @param _posm Uniswap V4 Position Manager address
     /// @param _permit2 Permit2 contract address
     /// @param _poolManager Uniswap V4 Pool Manager address
     /// @param _devAddress Address to receive dev MiniRocks
-    constructor(address _posm, address _permit2, address _poolManager, address _devAddress) {
+    function initialize(address _posm, address _permit2, address _poolManager, address _devAddress) public initializer {
+        __Ownable_init(msg.sender);
+        __UUPSUpgradeable_init();
+        
         posm = IPositionManager(_posm);
         permit2 = IAllowanceTransfer(_permit2);
         poolManager = IPoolManager(_poolManager);
         devAddress = _devAddress;
+        waitPeriod = 1 days;
         miniRock = new MiniRock(address(this));
-        
-         _initializeOwner(msg.sender);
     }
 
     // Add function to acquire a rock if the contract has the money
@@ -442,5 +451,21 @@ contract StoneQuarry is Ownable, IERC721Receiver {
     ) external pure override returns (bytes4) {
         return IERC721Receiver.onERC721Received.selector;
     }
+
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    /*                  UPGRADE AUTHORIZATION              */
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+
+    /// @notice Authorizes an upgrade to a new implementation
+    /// @dev Only the owner can authorize an upgrade
+    /// @param newImplementation Address of the new implementation contract
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    /*                    STORAGE GAP                      */
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+
+    /// @dev Gap for future storage variables in upgrades
+    uint256[50] private __gap;
 }
 
