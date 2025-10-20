@@ -15,6 +15,10 @@ import { LiquidityAmounts } from "v4-core/test/utils/LiquidityAmounts.sol";
 import { Initializable } from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import { OwnableUpgradeable } from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import { UUPSUpgradeable } from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import { IUnlockCallback } from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
+import { CurrencySettler } from "v4-core/test/utils/CurrencySettler.sol";
+import { BalanceDelta } from "v4-core/src/types/BalanceDelta.sol";
+import { SwapParams } from "v4-core/src/types/PoolOperation.sol";
 
 import "./Pebble.sol";
 import "./StoneQuarryHook.sol";
@@ -31,7 +35,8 @@ interface IERC721Receiver {
     ) external returns (bytes4);
 }
 
-contract StoneQuarry is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC721Receiver {
+contract StoneQuarry is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC721Receiver, IUnlockCallback {
+    using CurrencySettler for Currency;
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                      CONSTANTS                      */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
@@ -96,6 +101,8 @@ contract StoneQuarry is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
     mapping(uint256 => uint256) public rockAcquisitionOrder;
     /// @notice Tracks how many dev MiniRocks have been claimed per rock
     mapping(uint256 => uint256) public devMiniRocksClaimedPerRock;
+    /// @notice Tracks total Pebble tokens burned through buy-and-burn
+    uint256 public totalPebbleBurned;
 
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                    CUSTOM ERRORS                    */
@@ -149,6 +156,7 @@ contract StoneQuarry is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
     event MintPriceUpdated(uint256 rockNumber, uint256 newPrice);
     event DevMiniRocksClaimed(address indexed dev, uint256 rockNumber, uint256 amount);
     event DevAddressUpdated(address indexed oldAddress, address indexed newAddress);
+    event PebbleBurned(uint256 ethSpent, uint256 pebbleAmount);
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                     INITIALIZER                     */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
@@ -284,6 +292,9 @@ contract StoneQuarry is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
         uint256 tokenId = miniRock.mint(msg.sender, rockNumber);
         miniRocksMintedPerRock[rockNumber]++;
         
+        // Buy and burn Pebble with the payment
+        _buyAndBurnPebble(msg.value);
+        
         emit MiniRockMinted(msg.sender, tokenId, msg.value);
     }
 
@@ -323,6 +334,74 @@ contract StoneQuarry is Initializable, OwnableUpgradeable, UUPSUpgradeable, IERC
     /// @return True if rock is one of the first 10 acquired (dev fee applies)
     function isDevFeeApplicable(uint256 rockNumber) public view returns (bool) {
         return rockAcquisitionOrder[rockNumber] > 0 && rockAcquisitionOrder[rockNumber] <= DEV_FEE_ROCK_LIMIT;
+    }
+
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    /*                  BUY AND BURN FUNCTIONS             */
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+
+    /// @notice Buys Pebble tokens with ETH and burns them
+    /// @param ethAmount Amount of ETH to use for buying Pebble
+    /// @dev Uses Uniswap V4 to swap ETH for Pebble, then burns the received tokens
+    function _buyAndBurnPebble(uint256 ethAmount) internal {
+        if (ethAmount == 0) return;
+        if (!quarryStarted) return; // Can't swap if pool doesn't exist yet
+        
+        // Construct the pool key (must match the one from _loadLiquidity)
+        PoolKey memory pool = PoolKey({
+            currency0: Currency.wrap(address(0)), // ETH
+            currency1: Currency.wrap(address(pebble)), // Pebble
+            fee: 0,
+            tickSpacing: 60,
+            hooks: IHooks(hookAddress)
+        });
+
+        // Perform the swap: ETH -> Pebble (zeroForOne = true)
+        uint256 pebbleBalanceBefore = pebble.balanceOf(address(this));
+        
+        poolManager.unlock(
+            abi.encode(pool, ethAmount, pebbleBalanceBefore)
+        );
+    }
+
+    /// @notice Callback function for Uniswap V4 unlock
+    /// @param data Encoded pool key, ETH amount, and balance before
+    /// @return Encoded zero bytes
+    function unlockCallback(bytes calldata data) external returns (bytes memory) {
+        require(msg.sender == address(poolManager), "Only pool manager");
+        
+        (PoolKey memory pool, uint256 ethAmount, uint256 pebbleBalanceBefore) = 
+            abi.decode(data, (PoolKey, uint256, uint256));
+
+        // Execute the swap
+        BalanceDelta delta = poolManager.swap(
+            pool,
+            SwapParams({
+                zeroForOne: true, // ETH -> Pebble
+                amountSpecified: -int256(ethAmount), // Exact input
+                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1 // No price limit
+            }),
+            bytes("")
+        );
+
+        // Settle ETH (currency0) - we're paying ETH
+        pool.currency0.settle(poolManager, address(this), uint256(int256(-delta.amount0())), false);
+        
+        // Take Pebble (currency1) - we're receiving Pebble
+        pool.currency1.take(poolManager, address(this), uint256(int256(delta.amount1())), false);
+
+        // Calculate how much Pebble we received
+        uint256 pebbleBalanceAfter = pebble.balanceOf(address(this));
+        uint256 pebbleReceived = pebbleBalanceAfter - pebbleBalanceBefore;
+
+        // Burn the Pebble tokens
+        if (pebbleReceived > 0) {
+            pebble.burn(pebbleReceived);
+            totalPebbleBurned += pebbleReceived;
+            emit PebbleBurned(ethAmount, pebbleReceived);
+        }
+
+        return bytes("");
     }
 
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */

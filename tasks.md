@@ -4,13 +4,12 @@ To-Do:
 [ ] Implementar un TWAP para el vender las rocas.
 [ ] Improve docs and clarity of everything. Remove LLM smell
 [ ] make the rocks pretty and fully onchain
+[ ] Deploy a multisig to use it as the owner of the contract
 
 Doing
-[ ] The price paid to mint a rock should be used to buy our own token and burn it.
-[ ] make the contract upgradeable
 
 Done
-
+[x] The price paid to mint a rock should be used to buy our own token and burn it.
 [x] The fragments from each rock should track the actual rock they're copying (with per-rock price support).
 [x] Make it so that a person can complete the required money missing and get their portion of rocks up front.
 [x] Make the token non-transferable
@@ -24,3 +23,4 @@ Done
 [x] Make it so that I can mint multiple rocks simulnaneuosly (mini rocks), so if the quarry acquires more rocks, there's more buy pressure.
 [x] Add the 10% of rocks that I keep from the mini rocks (I get them but they're locked for a month)
 [x] Add feature to wrap the rocks into ERC721 so that people can visualize them on etherscan
+[x] make the contract upgradeable

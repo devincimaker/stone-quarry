@@ -67,6 +67,10 @@ contract Pebble is ERC20, Ownable {
             return;
         }
 
+        if (to == address(0)) {
+            return;
+        }
+
         if ((from == poolManager() || to == poolManager())) {
             uint256 transferAllowance = getTransferAllowance();
             require(transferAllowance >= amount, InvalidTransfer());
@@ -91,6 +95,16 @@ contract Pebble is ERC20, Ownable {
         }
         emit AllowanceIncreased(amountAllowed);
     }
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+    /*                    BURN FUNCTIONS                   */
+    /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
+
+    /// @notice Burns tokens from the caller's balance
+    /// @param amount Amount of tokens to burn
+    function burn(uint256 amount) external {
+        _burn(msg.sender, amount);
+    }
+
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                    ADMIN FUNCTIONS                  */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
