@@ -331,13 +331,17 @@ contract QuarryTest is Test {
         // Purchase rock #20 (for sale at 124 ETH)
         quarry.acquireRock(20);
         
-        // Verify the contract now owns the rock
+        // After wrapping, verify the wrapper owns the rock in OG contract
         (address ownerAfter, bool forSaleAfter,, uint256 timesSoldAfter) = 
             quarry.etherRockOG().rocks(20);
         
-        assertEq(ownerAfter, address(quarry), "Quarry should own the rock");
+        assertEq(ownerAfter, address(quarry.etherRock721()), "ERC721 wrapper should own the rock in OG contract");
         assertFalse(forSaleAfter, "Rock should no longer be for sale");
         assertEq(timesSoldAfter, timesSoldBefore + 1, "Times sold should increment");
+        
+        // Verify the quarry owns the ERC721 wrapped rock
+        address erc721Owner = quarry.etherRock721().ownerOf(20);
+        assertEq(erc721Owner, address(quarry), "Quarry should own the ERC721 wrapped rock");
         
         // Verify ETH was spent
         uint256 balanceAfter = address(quarry).balance;
@@ -433,13 +437,17 @@ contract QuarryTest is Test {
         // Purchase rock #20 using accumulated fees
         quarry.acquireRock(20);
         
-        // Verify the contract now owns the rock
+        // After wrapping, verify the wrapper owns the rock in OG contract
         (address ownerAfter, bool forSaleAfter,, uint256 timesSoldAfter) = 
             quarry.etherRockOG().rocks(20);
         
-        assertEq(ownerAfter, address(quarry), "Quarry should own the rock");
+        assertEq(ownerAfter, address(quarry.etherRock721()), "ERC721 wrapper should own the rock in OG contract");
         assertFalse(forSaleAfter, "Rock should no longer be for sale");
         assertEq(timesSoldAfter, timesSoldBefore + 1, "Times sold should increment");
+        
+        // Verify the quarry owns the ERC721 wrapped rock
+        address erc721Owner = quarry.etherRock721().ownerOf(20);
+        assertEq(erc721Owner, address(quarry), "Quarry should own the ERC721 wrapped rock");
         
         // Verify ETH was spent
         uint256 quarryBalanceAfter = address(quarry).balance;
@@ -491,12 +499,12 @@ contract QuarryTest is Test {
         // Verify rocks acquired
         assertEq(quarry.rocksAcquired(), 1, "Should have 1 rock acquired");
         
-        // Give user ETH to mint
-        address minter = address(0x1234);
-        vm.deal(minter, 1 ether);
-        
         // Get the mint price for this rock (set automatically on acquisition)
         uint256 mintPrice = quarry.mintPricePerRock(20);
+        
+        // Give user enough ETH to mint
+        address minter = address(0x1234);
+        vm.deal(minter, mintPrice);
         
         // Mint a MiniRock
         vm.prank(minter);
@@ -543,7 +551,7 @@ contract QuarryTest is Test {
         
         // First mint
         address minter = address(0x1234);
-        vm.deal(minter, 1 ether);
+        vm.deal(minter, mintPrice * 2); // Enough for potential second attempt
         
         vm.prank(minter);
         quarry.mintMiniRock{value: mintPrice}(20);
@@ -563,7 +571,7 @@ contract QuarryTest is Test {
         
         // First mint
         address minter = address(0x1234);
-        vm.deal(minter, 1 ether);
+        vm.deal(minter, mintPrice * 2); // Enough for both mints
         
         vm.prank(minter);
         quarry.mintMiniRock{value: mintPrice}(20);
@@ -583,22 +591,22 @@ contract QuarryTest is Test {
         quarry.updateWaitPeriod(0); // Remove wait period for faster testing
         
         vm.deal(address(quarry), 1000 ether);
-        quarry.acquireRock(20); // 1 rock = 100 MiniRocks max
+        quarry.acquireRock(20); // 1st rock acquired: 90 public + 10 dev = 100 MiniRocks total
         
         uint256 mintPrice = quarry.mintPricePerRock(20);
         
         address minter = address(0x1234);
-        vm.deal(minter, 10 ether);
+        vm.deal(minter, mintPrice * 91); // Enough for 90 mints plus one extra attempt
         
-        // Mint 100 MiniRocks (the maximum for 1 rock)
-        for (uint256 i = 0; i < 100; i++) {
+        // Mint 90 MiniRocks (the maximum for 1st rock with 10% dev fee)
+        for (uint256 i = 0; i < 90; i++) {
             vm.prank(minter);
             quarry.mintMiniRock{value: mintPrice}(20);
         }
         
-        assertEq(miniRock.totalSupply(), 100, "Should have minted 100 MiniRocks");
+        assertEq(miniRock.totalSupply(), 90, "Should have minted 90 MiniRocks (10 reserved for dev)");
         
-        // Try to mint one more (should revert)
+        // Try to mint one more (should revert since 10 are reserved for dev)
         vm.prank(minter);
         vm.expectRevert(StoneQuarry.MiniRockNotAvailable.selector);
         quarry.mintMiniRock{value: mintPrice}(20);
@@ -622,7 +630,7 @@ contract QuarryTest is Test {
         uint256 mintPrice = quarry.mintPricePerRock(20);
         
         address minter = address(0x1234);
-        vm.deal(minter, 50 ether);
+        vm.deal(minter, mintPrice * 51); // Enough for 51 mints
         
         // Mint 50 MiniRocks (should succeed as limit is 100 with 1 rock)
         for (uint256 i = 0; i < 50; i++) {
@@ -649,7 +657,7 @@ contract QuarryTest is Test {
         
         // Mint a MiniRock
         address minter = address(0x1234);
-        vm.deal(minter, 1 ether);
+        vm.deal(minter, mintPrice);
         
         vm.prank(minter);
         quarry.mintMiniRock{value: mintPrice}(20);
@@ -671,7 +679,7 @@ contract QuarryTest is Test {
         uint256 mintPrice = quarry.mintPricePerRock(20);
         
         address minter = address(0x1234);
-        vm.deal(minter, 1 ether);
+        vm.deal(minter, mintPrice);
         
         vm.prank(minter);
         quarry.mintMiniRock{value: mintPrice}(20);

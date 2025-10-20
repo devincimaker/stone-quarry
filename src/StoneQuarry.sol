@@ -17,9 +17,19 @@ import { Ownable } from "solady/auth/Ownable.sol";
 import "./Pebble.sol";
 import "./StoneQuarryHook.sol";
 import "./IEtherRockOG.sol";
+import "./IEtherRock721.sol";
 import "./MiniRock.sol";
 
-contract StoneQuarry is Ownable {
+interface IERC721Receiver {
+    function onERC721Received(
+        address operator,
+        address from,
+        uint256 tokenId,
+        bytes calldata data
+    ) external returns (bytes4);
+}
+
+contract StoneQuarry is Ownable, IERC721Receiver {
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                      CONSTANTS                      */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
@@ -37,6 +47,8 @@ contract StoneQuarry is Ownable {
     IPoolManager private immutable poolManager;
     /// @notice The EtherRockOG contract
     IEtherRockOG public constant etherRockOG = IEtherRockOG(0x41f28833Be34e6EDe3c58D1f597bef429861c4E2);
+    /// @notice The EtherRock ERC721 wrapper contract
+    IEtherRock721 public constant etherRock721 = IEtherRock721(0xA3F5998047579334607c47a6a2889BF87A17Fc02);
     /// @notice The address to burn tokens
     address public constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
     /// @notice Dev fee percentage (10 out of 100 MiniRocks)
@@ -202,6 +214,11 @@ contract StoneQuarry is Ownable {
         rockAcquisitionOrder[rockNumber] = rocksAcquired;
 
         mintPricePerRock[rockNumber] = price / 100;
+
+        // Wrap rock into ERC721 for proper display on block explorers
+        etherRock721.update(rockNumber);  // Sync owner records to StoneQuarry
+        etherRockOG.giftRock(rockNumber, address(etherRock721));  // Transfer to wrapper
+        etherRock721.wrap(rockNumber);  // Mint ERC721 to this contract
     }
 
     /// @notice Claim allocated MiniRocks from contributing to rock purchases
@@ -415,5 +432,15 @@ contract StoneQuarry is Ownable {
 
     /// @notice Allows the contract to receive ETH fees from the hook
     receive() external payable {}
+
+    /// @notice Implements ERC721 receiver to accept wrapped rock NFTs
+    function onERC721Received(
+        address,
+        address,
+        uint256,
+        bytes calldata
+    ) external pure override returns (bytes4) {
+        return IERC721Receiver.onERC721Received.selector;
+    }
 }
 

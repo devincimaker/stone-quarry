@@ -1,11 +1,12 @@
 To-Do:
 [ ] make the rocks pretty and fully onchain
-[ ] Add feature to wrap the rocks into ERC721 so that people can visualize them on etherscan
-[ ] Implementar un TWAP para el vender las rocas.
 [ ] make the contract upgradeable
+[ ] create good readme for the system
+[ ] deploy into an open repository
+[ ] Implementar un TWAP para el vender las rocas.
 
 Doing
-[ ] Add the 10% of rocks that I keep from the mini rocks (I get them but they're locked for a month)
+[ ] Add feature to wrap the rocks into ERC721 so that people can visualize them on etherscan
 
 Done
 
@@ -20,3 +21,4 @@ Done
 [x] Hacer flow de testeo para token tax y non-transfer
 [x] Add feature so that the contract can acquire a rock if it has the money.
 [x] Make it so that I can mint multiple rocks simulnaneuosly (mini rocks), so if the quarry acquires more rocks, there's more buy pressure.
+[x] Add the 10% of rocks that I keep from the mini rocks (I get them but they're locked for a month)
