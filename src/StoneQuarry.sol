@@ -39,6 +39,12 @@ contract StoneQuarry is Ownable {
     IEtherRockOG public constant etherRockOG = IEtherRockOG(0x41f28833Be34e6EDe3c58D1f597bef429861c4E2);
     /// @notice The address to burn tokens
     address public constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;
+    /// @notice Dev fee percentage (10 out of 100 MiniRocks)
+    uint256 public constant DEV_FEE_PERCENTAGE = 10;
+    /// @notice Only first 10 rocks get dev fee
+    uint256 public constant DEV_FEE_ROCK_LIMIT = 10;
+    /// @notice Lock period before dev can claim (30 days)
+    uint256 public constant LOCK_PERIOD = 30 days;
 
 
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
@@ -47,8 +53,9 @@ contract StoneQuarry is Ownable {
 
     /// @notice The address for the Uniswap hook
     address public hookAddress; 
-    /// @notice The address that receives the fees
-    address public feeAddress;
+
+    /// @notice The address that receives dev MiniRocks
+    address public devAddress;
     /// @notice Gates the hook to only when we're loading a new token
     bool public loadingLiquidity;
     ///@notice Tracks if the stone quarry started working 
@@ -69,6 +76,12 @@ contract StoneQuarry is Ownable {
     mapping(uint256 => uint256) public miniRocksMintedPerRock;
     /// @notice Tracks how many MiniRocks have been allocated per rock
     mapping(uint256 => uint256) public miniRocksAllocatedPerRock;
+    /// @notice Tracks when each rock was acquired (for lock period calculation)
+    mapping(uint256 => uint256) public rockAcquiredTimestamp;
+    /// @notice Tracks acquisition order (1st, 2nd, 3rd rock acquired, etc.)
+    mapping(uint256 => uint256) public rockAcquisitionOrder;
+    /// @notice Tracks how many dev MiniRocks have been claimed per rock
+    mapping(uint256 => uint256) public devMiniRocksClaimedPerRock;
 
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                    CUSTOM ERRORS                    */
@@ -101,7 +114,15 @@ contract StoneQuarry is Ownable {
     /// @notice Cannot allocate more than 100 MiniRocks per rock
     error ExceedsMaxAllocation();
     /// @notice Rock has not been acquired yet
-    error RockNotAcquired(); 
+    error RockNotAcquired();
+    /// @notice Dev MiniRocks are still locked
+    error DevMiniRocksStillLocked(uint256 unlockTime);
+    /// @notice Caller is not the dev address
+    error NotDevAddress();
+    /// @notice Exceeds dev allocation of MiniRocks
+    error ExceedsDevAllocation();
+    /// @notice No dev fee for this rock (only first 10 rocks)
+    error NoDevFeeForThisRock();
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                    CUSTOM EVENTS                    */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
@@ -112,6 +133,8 @@ contract StoneQuarry is Ownable {
     event MiniRockAllocated(address indexed user, uint256 amount, uint256 contribution, uint256 rockNumber);
     event MiniRocksClaimed(address indexed user, uint256 amount);
     event MintPriceUpdated(uint256 rockNumber, uint256 newPrice);
+    event DevMiniRocksClaimed(address indexed dev, uint256 rockNumber, uint256 amount);
+    event DevAddressUpdated(address indexed oldAddress, address indexed newAddress);
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                     CONSTRUCTOR                     */
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
@@ -120,12 +143,12 @@ contract StoneQuarry is Ownable {
     /// @param _posm Uniswap V4 Position Manager address
     /// @param _permit2 Permit2 contract address
     /// @param _poolManager Uniswap V4 Pool Manager address
-    /// @param _feeAddress Address to receive deployment fees
-    constructor(address _posm, address _permit2, address _poolManager, address _feeAddress) {
+    /// @param _devAddress Address to receive dev MiniRocks
+    constructor(address _posm, address _permit2, address _poolManager, address _devAddress) {
         posm = IPositionManager(_posm);
         permit2 = IAllowanceTransfer(_permit2);
         poolManager = IPoolManager(_poolManager);
-        feeAddress = _feeAddress; 
+        devAddress = _devAddress;
         miniRock = new MiniRock(address(this));
         
          _initializeOwner(msg.sender);
@@ -173,6 +196,10 @@ contract StoneQuarry is Ownable {
         // Mark rock as acquired and increment counter
         rockAcquired[rockNumber] = true;
         rocksAcquired++;
+        
+        // Track acquisition timestamp and order for dev fee logic
+        rockAcquiredTimestamp[rockNumber] = block.timestamp;
+        rockAcquisitionOrder[rockNumber] = rocksAcquired;
 
         mintPricePerRock[rockNumber] = price / 100;
     }
@@ -207,8 +234,10 @@ contract StoneQuarry is Ownable {
         if (!rockAcquired[rockNumber]) revert RockNotAcquired();
         
         // Check if there are available MiniRocks to mint from this rock
-        // Each rock allows 100 MiniRocks total, minus allocated ones
-        uint256 maxSupplyForRock = 100 - miniRocksAllocatedPerRock[rockNumber];
+        // First 10 rocks: 90 MiniRocks available (10 reserved for dev)
+        // Rocks 11+: 100 MiniRocks available (no dev fee)
+        uint256 totalAvailableForRock = isDevFeeApplicable(rockNumber) ? 90 : 100;
+        uint256 maxSupplyForRock = totalAvailableForRock - miniRocksAllocatedPerRock[rockNumber];
         uint256 currentMintedForRock = miniRocksMintedPerRock[rockNumber];
         
         if (currentMintedForRock >= maxSupplyForRock) revert MiniRockNotAvailable();
@@ -230,7 +259,45 @@ contract StoneQuarry is Ownable {
         miniRocksMintedPerRock[rockNumber]++;
         
         emit MiniRockMinted(msg.sender, tokenId, msg.value);
-    } 
+    }
+
+    /// @notice Claim dev MiniRocks after lock period
+    /// @dev Only callable by dev address
+    /// @dev Can only claim from first 10 rocks acquired
+    /// @dev Must wait LOCK_PERIOD (30 days) from rock acquisition
+    /// @param rockNumber The rock number to claim dev MiniRocks from
+    /// @param amount Number of dev MiniRocks to claim (max 10 per rock)
+    function claimDevMiniRocks(uint256 rockNumber, uint256 amount) external {
+        if (msg.sender != devAddress) revert NotDevAddress();
+        if (!rockAcquired[rockNumber]) revert RockNotAcquired();
+        if (!isDevFeeApplicable(rockNumber)) revert NoDevFeeForThisRock();
+        
+        // Check lock period has passed
+        uint256 unlockTime = rockAcquiredTimestamp[rockNumber] + LOCK_PERIOD;
+        if (block.timestamp < unlockTime) revert DevMiniRocksStillLocked(unlockTime);
+        
+        // Check dev allocation limit (10 MiniRocks per rock)
+        uint256 alreadyClaimed = devMiniRocksClaimedPerRock[rockNumber];
+        if (alreadyClaimed + amount > DEV_FEE_PERCENTAGE) revert ExceedsDevAllocation();
+        
+        // Update tracking
+        devMiniRocksClaimedPerRock[rockNumber] += amount;
+        
+        // Mint the dev MiniRocks
+        for (uint256 i = 0; i < amount; i++) {
+            miniRock.mint(devAddress, rockNumber);
+            miniRocksMintedPerRock[rockNumber]++;
+        }
+        
+        emit DevMiniRocksClaimed(devAddress, rockNumber, amount);
+    }
+
+    /// @notice Helper function to check if dev fee applies to a rock
+    /// @param rockNumber The rock number to check
+    /// @return True if rock is one of the first 10 acquired (dev fee applies)
+    function isDevFeeApplicable(uint256 rockNumber) public view returns (bool) {
+        return rockAcquisitionOrder[rockNumber] > 0 && rockAcquisitionOrder[rockNumber] <= DEV_FEE_ROCK_LIMIT;
+    }
 
     /* ™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™™ */
     /*                    ADMIN FUNCTIONS                  */
@@ -258,6 +325,15 @@ contract StoneQuarry is Ownable {
     /// @dev Only callable by owner
     function updateHookAddress(address _hookAddress) external onlyOwner {
         hookAddress = _hookAddress;
+    }
+
+    /// @notice Update the dev address that can claim dev MiniRocks
+    /// @param _devAddress New dev address
+    /// @dev Only callable by owner
+    function updateDevAddress(address _devAddress) external onlyOwner {
+        address oldAddress = devAddress;
+        devAddress = _devAddress;
+        emit DevAddressUpdated(oldAddress, _devAddress);
     }
 
     function startQuarry() external payable onlyOwner {

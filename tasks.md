@@ -1,15 +1,11 @@
 To-Do:
-
-[ ] Do 100 IPFS images
-[ ] make rocks so that they look pretty, are SVG and respect the style of the original ones.
-
-Doing
-
+[ ] make the rocks pretty and fully onchain
 [ ] Add feature to wrap the rocks into ERC721 so that people can visualize them on etherscan
 [ ] Implementar un TWAP para el vender las rocas.
-[ ] Add the 10% of rocks that I keep from the mini rocks (I get them but they're locked for a month)
 [ ] make the contract upgradeable
-[ ] add a forge where someone can burn 100 pieces and get a rock back.
+
+Doing
+[ ] Add the 10% of rocks that I keep from the mini rocks (I get them but they're locked for a month)
 
 Done
 
